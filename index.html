@@ -1,0 +1,1480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SuspensionViz — Car Suspension Model Visualizer</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#09090b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="description" content="Interactive 3D visualization of car suspension models: Quarter Car, Bicycle, and Full Car (6+ DoF)">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #18181b; }
+    ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+    html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; }
+    #three-canvas { width: 100%; height: 100%; display: block; }
+    .slider-amber::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #f59e0b; cursor: pointer; border: 2px solid #18181b;
+    }
+    .slider-amber::-webkit-slider-runnable-track {
+      height: 4px; background: #3f3f46; border-radius: 2px;
+    }
+    .slider-amber { -webkit-appearance: none; appearance: none; width: 100%; background: transparent; }
+    .slider-amber::-moz-range-thumb {
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #f59e0b; cursor: pointer; border: 2px solid #18181b;
+    }
+    .slider-amber::-moz-range-track { height: 4px; background: #3f3f46; border-radius: 2px; }
+    .tab-active { background: rgba(245, 158, 11, 0.1); color: #fbbf24; border-color: rgba(245,158,11,0.5); }
+    .tab-inactive { color: #a1a1aa; border-color: transparent; }
+    .tab-inactive:hover { color: #fbbf24; background: rgba(245,158,11,0.05); }
+    @keyframes pulse-glow { 0%,100% { box-shadow: 0 0 8px rgba(245,158,11,0.2); } 50% { box-shadow: 0 0 16px rgba(245,158,11,0.4); } }
+    .glow-pulse { animation: pulse-glow 2s ease-in-out infinite; }
+    .plot-canvas { image-rendering: pixelated; }
+  </style>
+</head>
+<body class="bg-zinc-950 text-zinc-300 font-sans h-full flex flex-col">
+
+  <!-- Header -->
+  <header class="sticky top-0 z-40 bg-zinc-900/80 backdrop-blur-sm border-b border-zinc-800 px-4 py-2.5 flex items-center justify-between flex-shrink-0">
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
+          <i data-lucide="car" class="w-4 h-4 text-amber-500"></i>
+        </div>
+        <h1 class="font-mono font-bold text-amber-500 text-base tracking-tight">SuspensionViz</h1>
+      </div>
+      <span class="text-xs text-zinc-500 font-mono hidden sm:inline">car suspension model visualizer</span>
+    </div>
+    <!-- Model Tabs -->
+    <nav class="flex gap-1" id="model-tabs">
+      <button onclick="switchModel('quarter')" data-model="quarter" class="tab-active text-xs font-mono px-3 py-1.5 rounded-lg border transition-all duration-200">
+        Quarter Car
+      </button>
+      <button onclick="switchModel('bicycle')" data-model="bicycle" class="tab-inactive text-xs font-mono px-3 py-1.5 rounded-lg border transition-all duration-200">
+        Bicycle
+      </button>
+      <button onclick="switchModel('fullcar')" data-model="fullcar" class="tab-inactive text-xs font-mono px-3 py-1.5 rounded-lg border transition-all duration-200">
+        Full Car
+      </button>
+    </nav>
+    <div class="flex items-center gap-2">
+      <span class="text-xs px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded font-mono" id="fps-badge">60 fps</span>
+      <button onclick="toggleFullscreen()" class="text-zinc-400 hover:text-amber-400 hover:bg-zinc-800 p-1.5 rounded-lg transition-colors">
+        <i data-lucide="maximize-2" class="w-4 h-4"></i>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="flex-1 flex overflow-hidden">
+    <!-- 3D Viewport -->
+    <div class="flex-1 relative" id="viewport-container">
+      <canvas id="three-canvas"></canvas>
+      <!-- Overlay: Model Label -->
+      <div class="absolute top-4 left-4 pointer-events-none">
+        <div class="bg-zinc-900/80 backdrop-blur-sm border border-zinc-700 rounded-lg px-3 py-2">
+          <div class="flex gap-1.5 mb-2">
+            <div class="w-2 h-2 rounded-full bg-red-500"></div>
+            <div class="w-2 h-2 rounded-full bg-yellow-500"></div>
+            <div class="w-2 h-2 rounded-full bg-green-500"></div>
+          </div>
+          <p class="font-mono text-xs text-zinc-400" id="model-label">quarter_car_2dof.sim</p>
+        </div>
+      </div>
+      <!-- Overlay: Legend -->
+      <div class="absolute bottom-4 left-4 pointer-events-none">
+        <div class="bg-zinc-900/80 backdrop-blur-sm border border-zinc-700 rounded-lg px-3 py-2 flex gap-4">
+          <div class="flex items-center gap-1.5">
+            <div class="w-3 h-1.5 rounded-full bg-amber-500"></div>
+            <span class="text-xs font-mono text-zinc-400">spring</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <div class="w-3 h-1.5 rounded-full bg-red-400"></div>
+            <span class="text-xs font-mono text-zinc-400">damper</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <div class="w-3 h-1.5 rounded-full bg-zinc-400"></div>
+            <span class="text-xs font-mono text-zinc-400">mass</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Control Panel -->
+    <aside class="w-80 bg-zinc-900 border-l border-zinc-800 overflow-y-auto flex-shrink-0 flex flex-col" id="controls-panel">
+      <!-- Simulation Controls -->
+      <div class="p-4 border-b border-zinc-800">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">Simulation</span>
+          <span class="text-xs px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded font-mono" id="time-badge">t = 0.00s</span>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="togglePlay()" id="btn-play" class="flex-1 bg-amber-500 hover:bg-amber-400 text-zinc-900 font-mono font-bold px-4 py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2">
+            <i data-lucide="play" class="w-4 h-4" id="icon-play"></i>
+            <span id="btn-play-text">Play</span>
+          </button>
+          <button onclick="resetSim()" class="bg-zinc-700 hover:bg-zinc-600 text-zinc-300 font-mono px-3 py-2.5 rounded-lg transition-colors">
+            <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Road Input -->
+      <div class="p-4 border-b border-zinc-800">
+        <span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">Road Input</span>
+        <div class="flex gap-1.5 mt-3">
+          <button onclick="setRoadType('bump')" data-road="bump" class="road-btn tab-active text-xs font-mono px-2.5 py-1.5 rounded-lg border transition-all">Bump</button>
+          <button onclick="setRoadType('sine')" data-road="sine" class="road-btn tab-inactive text-xs font-mono px-2.5 py-1.5 rounded-lg border transition-all">Sine</button>
+          <button onclick="setRoadType('random')" data-road="random" class="road-btn tab-inactive text-xs font-mono px-2.5 py-1.5 rounded-lg border transition-all">Random</button>
+        </div>
+        <div class="mt-3">
+          <div class="flex justify-between items-center mb-1">
+            <label class="text-xs text-zinc-500 font-mono">Speed</label>
+            <span class="text-xs font-mono text-amber-400" id="val-speed">5.0 m/s</span>
+          </div>
+          <input type="range" min="1" max="20" step="0.5" value="5" class="slider-amber" id="slider-speed" oninput="updateSpeed(this.value)">
+        </div>
+        <div class="mt-2">
+          <div class="flex justify-between items-center mb-1">
+            <label class="text-xs text-zinc-500 font-mono">Bump Height</label>
+            <span class="text-xs font-mono text-amber-400" id="val-bump">0.05 m</span>
+          </div>
+          <input type="range" min="0.01" max="0.15" step="0.005" value="0.05" class="slider-amber" id="slider-bump" oninput="updateBump(this.value)">
+        </div>
+      </div>
+
+      <!-- Model Parameters (dynamic) -->
+      <div class="p-4 border-b border-zinc-800" id="params-container">
+        <!-- Populated by JS based on active model -->
+      </div>
+
+      <!-- Response Plot -->
+      <div class="p-4 border-b border-zinc-800">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">Response</span>
+          <div class="flex gap-2">
+            <span class="flex items-center gap-1"><span class="w-2 h-0.5 bg-amber-500 inline-block"></span><span class="text-xs font-mono text-zinc-500">body</span></span>
+            <span class="flex items-center gap-1"><span class="w-2 h-0.5 bg-green-400 inline-block"></span><span class="text-xs font-mono text-zinc-500">wheel</span></span>
+            <span class="flex items-center gap-1"><span class="w-2 h-0.5 bg-zinc-500 inline-block"></span><span class="text-xs font-mono text-zinc-500">road</span></span>
+          </div>
+        </div>
+        <div class="bg-zinc-800 rounded-lg p-1 border border-zinc-700">
+          <canvas id="plot-canvas" width="280" height="120" class="plot-canvas w-full"></canvas>
+        </div>
+      </div>
+
+      <!-- Model Info -->
+      <div class="p-4 flex-1">
+        <span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">Model Info</span>
+        <div class="mt-3 space-y-2" id="model-info">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Three.js -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // ── Config ──────────────────────────────────────────────────────
+    const COLORS = {
+      bg: 0x09090b,
+      ground: 0x6b6b6b,
+      gridMain: 0x3f3f46,
+      gridSub: 0x27272a,
+      spring: 0xf59e0b,
+      damper: 0xef4444,
+      damperBody: 0x3f3f46,
+      mass: 0x52525b,
+      massLight: 0x71717a,
+      wheel: 0x27272a,
+      tire: 0x1a1a1e,
+      road: 0x8a8a8a,
+      roadBump: 0xf59e0b,
+      amber: 0xf59e0b,
+    };
+
+    // ── State ───────────────────────────────────────────────────────
+    const state = {
+      model: 'quarter',
+      playing: false,
+      time: 0,
+      dt: 1 / 60,
+      speed: 5.0,
+      bumpHeight: 0.05,
+      roadType: 'bump',
+      plotHistory: { body: [], wheel: [], road: [] },
+      maxPlotPoints: 280,
+    };
+
+    // Model parameters
+    const params = {
+      quarter: {
+        ms: { val: 350, min: 100, max: 800, step: 10, label: 'Sprung Mass', unit: 'kg' },
+        mu: { val: 40, min: 10, max: 100, step: 5, label: 'Unsprung Mass', unit: 'kg' },
+        ks: { val: 25000, min: 5000, max: 60000, step: 1000, label: 'Spring Rate', unit: 'N/m' },
+        cs: { val: 1500, min: 200, max: 6000, step: 100, label: 'Damping', unit: 'Ns/m' },
+        kt: { val: 200000, min: 50000, max: 400000, step: 10000, label: 'Tire Stiffness', unit: 'N/m' },
+      },
+      bicycle: {
+        m: { val: 1400, min: 600, max: 2500, step: 50, label: 'Vehicle Mass', unit: 'kg' },
+        Iy: { val: 2500, min: 800, max: 6000, step: 100, label: 'Pitch Inertia', unit: 'kg*m^2' },
+        kf: { val: 25000, min: 5000, max: 60000, step: 1000, label: 'Front Spring', unit: 'N/m' },
+        cf: { val: 2000, min: 200, max: 6000, step: 100, label: 'Front Damping', unit: 'Ns/m' },
+        kr: { val: 28000, min: 5000, max: 60000, step: 1000, label: 'Rear Spring', unit: 'N/m' },
+        cr: { val: 2200, min: 200, max: 6000, step: 100, label: 'Rear Damping', unit: 'Ns/m' },
+        a: { val: 1.2, min: 0.6, max: 2.0, step: 0.05, label: 'CG to Front', unit: 'm' },
+        b: { val: 1.4, min: 0.6, max: 2.0, step: 0.05, label: 'CG to Rear', unit: 'm' },
+      },
+      fullcar: {
+        m: { val: 1600, min: 800, max: 3000, step: 50, label: 'Vehicle Mass', unit: 'kg' },
+        Ix: { val: 600, min: 200, max: 2000, step: 50, label: 'Roll Inertia', unit: 'kg*m^2' },
+        Iy: { val: 2800, min: 800, max: 6000, step: 100, label: 'Pitch Inertia', unit: 'kg*m^2' },
+        kf: { val: 25000, min: 5000, max: 60000, step: 1000, label: 'Front Springs', unit: 'N/m' },
+        kr: { val: 28000, min: 5000, max: 60000, step: 1000, label: 'Rear Springs', unit: 'N/m' },
+        cf: { val: 2000, min: 200, max: 6000, step: 100, label: 'Front Damping', unit: 'Ns/m' },
+        cr: { val: 2200, min: 200, max: 6000, step: 100, label: 'Rear Damping', unit: 'Ns/m' },
+        tf: { val: 1.5, min: 1.0, max: 2.0, step: 0.05, label: 'Front Track', unit: 'm' },
+        tr: { val: 1.5, min: 1.0, max: 2.0, step: 0.05, label: 'Rear Track', unit: 'm' },
+      },
+    };
+
+    // Physics state vectors
+    let physState = [];
+    let modelGroup = null;
+    let modelParts = {};
+    let roadMeshes = [];
+
+    // ── Three.js Setup ──────────────────────────────────────────────
+    const canvas = document.getElementById('three-canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(COLORS.bg);
+    scene.fog = new THREE.FogExp2(COLORS.bg, 0.06);
+
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+    const controls = new OrbitControls(camera, canvas);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 2;
+    controls.maxDistance = 20;
+    controls.maxPolarAngle = Math.PI * 0.48;
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xfff5e6, 1.0);
+    dirLight.position.set(5, 10, 5);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.set(1024, 1024);
+    dirLight.shadow.camera.near = 0.5;
+    dirLight.shadow.camera.far = 30;
+    dirLight.shadow.camera.left = -8;
+    dirLight.shadow.camera.right = 8;
+    dirLight.shadow.camera.top = 8;
+    dirLight.shadow.camera.bottom = -8;
+    scene.add(dirLight);
+
+    const rimLight = new THREE.DirectionalLight(0xf59e0b, 0.3);
+    rimLight.position.set(-3, 4, -5);
+    scene.add(rimLight);
+
+    // Ground grid
+    const gridHelper = new THREE.GridHelper(30, 30, COLORS.gridMain, COLORS.gridSub);
+    gridHelper.position.y = -0.01;
+    gridHelper.material.opacity = 0.4;
+    gridHelper.material.transparent = true;
+    scene.add(gridHelper);
+
+    // Ground plane (receives shadows)
+    const groundGeo = new THREE.PlaneGeometry(30, 30);
+    const groundMat = new THREE.MeshStandardMaterial({ color: COLORS.ground, roughness: 0.95, metalness: 0.02 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.02;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // ── Helper: Create Spring Geometry ──────────────────────────────
+    function createSpringMesh(radius, height, coils, wireRadius, color) {
+      const group = new THREE.Group();
+      const segsPerCoil = 24;
+      const totalSegs = coils * segsPerCoil;
+      const pts = [];
+
+      for (let i = 0; i <= totalSegs; i++) {
+        const t = i / totalSegs;
+        const angle = t * coils * Math.PI * 2;
+        pts.push(new THREE.Vector3(
+          Math.cos(angle) * radius,
+          t * height,
+          Math.sin(angle) * radius
+        ));
+      }
+
+      // Straight leads at top and bottom
+      pts.unshift(new THREE.Vector3(0, 0, 0));
+      pts.push(new THREE.Vector3(0, height, 0));
+
+      const curve = new THREE.CatmullRomCurve3(pts);
+      const geo = new THREE.TubeGeometry(curve, totalSegs * 2, wireRadius, 8, false);
+      const mat = new THREE.MeshStandardMaterial({
+        color: color,
+        emissive: color,
+        emissiveIntensity: 0.25,
+        metalness: 0.7,
+        roughness: 0.3,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+      group.add(mesh);
+      group.userData.refHeight = height;
+      return group;
+    }
+
+    // ── Helper: Create Damper ───────────────────────────────────────
+    function createDamperMesh(height, bodyRadius, rodRadius) {
+      const group = new THREE.Group();
+
+      // Outer body (lower)
+      const bodyGeo = new THREE.CylinderGeometry(bodyRadius, bodyRadius, height * 0.5, 16);
+      const bodyMat = new THREE.MeshStandardMaterial({
+        color: COLORS.damperBody, metalness: 0.6, roughness: 0.4
+      });
+      const body = new THREE.Mesh(bodyGeo, bodyMat);
+      body.position.y = height * 0.25;
+      body.castShadow = true;
+      group.add(body);
+
+      // Inner rod (upper)
+      const rodGeo = new THREE.CylinderGeometry(rodRadius, rodRadius, height * 0.55, 12);
+      const rodMat = new THREE.MeshStandardMaterial({
+        color: COLORS.damper, metalness: 0.8, roughness: 0.2,
+        emissive: COLORS.damper, emissiveIntensity: 0.15
+      });
+      const rod = new THREE.Mesh(rodGeo, rodMat);
+      rod.position.y = height * 0.55;
+      rod.castShadow = true;
+      group.add(rod);
+
+      // End caps
+      const capGeo = new THREE.CylinderGeometry(bodyRadius * 1.2, bodyRadius * 1.2, 0.02, 16);
+      const capMat = new THREE.MeshStandardMaterial({ color: 0x52525b, metalness: 0.7, roughness: 0.3 });
+      const topCap = new THREE.Mesh(capGeo, capMat);
+      topCap.position.y = height * 0.5;
+      group.add(topCap);
+      const botCap = new THREE.Mesh(capGeo.clone(), capMat);
+      botCap.position.y = 0;
+      group.add(botCap);
+
+      group.userData.refHeight = height;
+      group.userData.body = body;
+      group.userData.rod = rod;
+      group.userData.topCap = topCap;
+      return group;
+    }
+
+    // ── Helper: Create Wheel ────────────────────────────────────────
+    function createWheel(radius, width) {
+      const group = new THREE.Group();
+
+      // Tire
+      const tireGeo = new THREE.TorusGeometry(radius, width * 0.4, 16, 32);
+      const tireMat = new THREE.MeshStandardMaterial({
+        color: COLORS.tire, roughness: 0.9, metalness: 0.05
+      });
+      const tire = new THREE.Mesh(tireGeo, tireMat);
+      // No rotation — default torus axis is Z (lateral), matching the road along X
+      tire.castShadow = true;
+      group.add(tire);
+
+      // Rim — cylinder default axis is Y, rotate to Z (lateral axle)
+      const rimGeo = new THREE.CylinderGeometry(radius * 0.6, radius * 0.6, width * 0.3, 24);
+      const rimMat = new THREE.MeshStandardMaterial({
+        color: COLORS.massLight, metalness: 0.8, roughness: 0.2
+      });
+      const rim = new THREE.Mesh(rimGeo, rimMat);
+      rim.rotation.x = Math.PI / 2;
+      rim.castShadow = true;
+      group.add(rim);
+
+      // Hub — same axis alignment as rim
+      const hubGeo = new THREE.CylinderGeometry(radius * 0.15, radius * 0.15, width * 0.35, 16);
+      const hubMat = new THREE.MeshStandardMaterial({
+        color: COLORS.amber, metalness: 0.9, roughness: 0.1,
+        emissive: COLORS.amber, emissiveIntensity: 0.2
+      });
+      const hub = new THREE.Mesh(hubGeo, hubMat);
+      hub.rotation.x = Math.PI / 2;
+      group.add(hub);
+
+      return group;
+    }
+
+    // ── Helper: Create Mass Block ───────────────────────────────────
+    function createMassBlock(w, h, d, color, label) {
+      const group = new THREE.Group();
+      const geo = new THREE.BoxGeometry(w, h, d);
+      // Round edges with bevel? Just use standard box for performance
+      const mat = new THREE.MeshStandardMaterial({
+        color: color, metalness: 0.5, roughness: 0.5
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+
+      // Edge highlight
+      const edgesGeo = new THREE.EdgesGeometry(geo);
+      const edgesMat = new THREE.LineBasicMaterial({ color: COLORS.gridMain, transparent: true, opacity: 0.5 });
+      const edges = new THREE.LineSegments(edgesGeo, edgesMat);
+      group.add(edges);
+
+      return group;
+    }
+
+    // ── Helper: Road Surface ────────────────────────────────────────
+    function createRoadSurface(length, width) {
+      const segments = 200;
+      const geo = new THREE.PlaneGeometry(length, width, segments, 1);
+      const mat = new THREE.MeshStandardMaterial({
+        color: COLORS.road,
+        roughness: 0.95,
+        metalness: 0.02,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.receiveShadow = true;
+
+      // Road stripe (edge marking)
+      const stripeGeo = new THREE.PlaneGeometry(length, 0.05, 1, 1);
+      const stripeMat = new THREE.MeshStandardMaterial({
+        color: COLORS.amber,
+        emissive: COLORS.amber,
+        emissiveIntensity: 0.3,
+        roughness: 0.5,
+      });
+      const stripe = new THREE.Mesh(stripeGeo, stripeMat);
+      stripe.rotation.x = -Math.PI / 2;
+      stripe.position.y = 0.005;
+      stripe.position.z = width / 2 + 0.1;
+
+      // ── 3D Road Profile Line (shows road input clearly) ──
+      const profilePts = segments + 1;
+      const profilePositions = new Float32Array(profilePts * 3);
+      const halfLen = length / 2;
+      for (let i = 0; i < profilePts; i++) {
+        const t = i / segments;
+        profilePositions[i * 3]     = (t - 0.5) * length; // x
+        profilePositions[i * 3 + 1] = 0.005;               // y
+        profilePositions[i * 3 + 2] = 0;                    // z
+      }
+      const profileGeo = new THREE.BufferGeometry();
+      profileGeo.setAttribute('position', new THREE.BufferAttribute(profilePositions, 3));
+      const profileMat = new THREE.LineBasicMaterial({ color: 0xf59e0b, linewidth: 2 });
+      const profileLine = new THREE.Line(profileGeo, profileMat);
+
+      // ── Road profile solid ribbon (thick visible band) ──
+      const ribbonWidth = 0.06;
+      const ribbonVerts = profilePts * 2 * 3; // two rows of vertices
+      const ribbonPositions = new Float32Array(ribbonVerts);
+      const ribbonIndices = [];
+      for (let i = 0; i < profilePts; i++) {
+        const x = (i / segments - 0.5) * length;
+        // Bottom vertex
+        ribbonPositions[i * 6]     = x;
+        ribbonPositions[i * 6 + 1] = 0.003;
+        ribbonPositions[i * 6 + 2] = -ribbonWidth / 2;
+        // Top vertex
+        ribbonPositions[i * 6 + 3] = x;
+        ribbonPositions[i * 6 + 4] = 0.003;
+        ribbonPositions[i * 6 + 5] = ribbonWidth / 2;
+        if (i < profilePts - 1) {
+          const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1;
+          ribbonIndices.push(a, c, b, b, c, d);
+        }
+      }
+      const ribbonGeo = new THREE.BufferGeometry();
+      ribbonGeo.setAttribute('position', new THREE.BufferAttribute(ribbonPositions, 3));
+      ribbonGeo.setIndex(ribbonIndices);
+      ribbonGeo.computeVertexNormals();
+      const ribbonMat = new THREE.MeshStandardMaterial({
+        color: 0xf59e0b,
+        emissive: 0xf59e0b,
+        emissiveIntensity: 0.6,
+        roughness: 0.3,
+        metalness: 0.4,
+        side: THREE.DoubleSide,
+      });
+      const ribbonMesh = new THREE.Mesh(ribbonGeo, ribbonMat);
+
+      const group = new THREE.Group();
+      group.add(mesh);
+      group.add(stripe);
+      group.add(profileLine);
+      group.add(ribbonMesh);
+      group.userData.mesh = mesh;
+      group.userData.segments = segments;
+      group.userData.profileLine = profileLine;
+      group.userData.ribbonMesh = ribbonMesh;
+      return group;
+    }
+
+    // ── Road Input Function ─────────────────────────────────────────
+    function roadInput(t, xOffset = 0) {
+      const x = state.speed * t - xOffset;
+      const h = state.bumpHeight;
+
+      if (state.roadType === 'bump') {
+        const bumpStart = 2;
+        const bumpLen = 0.3;
+        if (x >= bumpStart && x <= bumpStart + bumpLen) {
+          return h * Math.sin(Math.PI * (x - bumpStart) / bumpLen);
+        }
+        return 0;
+      } else if (state.roadType === 'sine') {
+        return h * Math.sin(2 * Math.PI * 0.5 * x);
+      } else {
+        // Pseudo-random (deterministic noise)
+        return h * (Math.sin(x * 3.7) * 0.5 + Math.sin(x * 7.3) * 0.3 + Math.sin(x * 13.1) * 0.2);
+      }
+    }
+
+    // ── Update spring/damper positions ──────────────────────────────
+    function updateSpringPos(spring, bottom, top, xOff = 0, zOff = 0) {
+      if (!spring) return;
+      const h = top - bottom;
+      const scale = Math.max(0.1, h / spring.userData.refHeight);
+      spring.scale.set(1, scale, 1);
+      spring.position.set(xOff, bottom, zOff);
+    }
+
+    function updateDamperPos(damper, bottom, top, xOff = 0, zOff = 0) {
+      if (!damper) return;
+      const h = top - bottom;
+      const scale = Math.max(0.1, h / damper.userData.refHeight);
+      damper.scale.set(1, scale, 1);
+      damper.position.set(xOff, bottom, zOff);
+    }
+
+    // ── BUILD MODELS ────────────────────────────────────────────────
+
+    // ═══ Quarter Car Model ═══
+    function buildQuarterCar() {
+      const group = new THREE.Group();
+      const p = params.quarter;
+
+      const wheelR = 0.3;
+      const unsprungH = 0.15;
+      const sprungH = 0.5;
+      const baseY = wheelR; // wheel center height
+      const unsprungY = baseY + 0.05;
+      const suspLen = 0.8;
+      const springR = 0.12;
+
+      // Wheel
+      const wheel = createWheel(wheelR, 0.2);
+      wheel.position.set(0, baseY, 0);
+      group.add(wheel);
+
+      // Tire spring (small, below unsprung mass)
+      const tireSpring = createSpringMesh(0.06, 0.3, 3, 0.015, 0x71717a);
+      group.add(tireSpring);
+
+      // Unsprung mass
+      const unsprung = createMassBlock(0.7, unsprungH, 0.5, COLORS.mass);
+      group.add(unsprung);
+
+      // Suspension spring
+      const suspSpring = createSpringMesh(springR, suspLen, 7, 0.02, COLORS.spring);
+      group.add(suspSpring);
+
+      // Suspension damper
+      const suspDamper = createDamperMesh(suspLen, 0.06, 0.035);
+      group.add(suspDamper);
+
+      // Sprung mass
+      const sprung = createMassBlock(1.0, sprungH, 0.7, COLORS.massLight);
+      group.add(sprung);
+
+      // CG indicator
+      const cgGeo = new THREE.SphereGeometry(0.04, 12, 12);
+      const cgMat = new THREE.MeshStandardMaterial({
+        color: COLORS.amber, emissive: COLORS.amber, emissiveIntensity: 0.5
+      });
+      const cg = new THREE.Mesh(cgGeo, cgMat);
+      group.add(cg);
+
+      // Road surface
+      const road = createRoadSurface(12, 1.5);
+      road.position.set(0, 0, 0);
+      group.add(road);
+
+      modelParts = { wheel, tireSpring, unsprung, suspSpring, suspDamper, sprung, cg, road };
+
+      // Initial positions
+      const uY = baseY + wheelR * 0.3 + unsprungH / 2;
+      unsprung.position.set(0, uY, 0);
+      const sBottom = uY + unsprungH / 2;
+      const sTop = sBottom + suspLen;
+      updateSpringPos(suspSpring, sBottom, sTop, -0.2, 0);
+      updateDamperPos(suspDamper, sBottom, sTop, 0.2, 0);
+      sprung.position.set(0, sTop + sprungH / 2, 0);
+      cg.position.set(0, sTop + sprungH / 2, 0);
+
+      // Tire spring
+      updateSpringPos(tireSpring, 0.02, uY - unsprungH / 2, 0, 0);
+
+      // Camera
+      camera.position.set(3, 2.5, 3);
+      controls.target.set(0, 1.2, 0);
+
+      return group;
+    }
+
+    // ═══ Bicycle (Half-Car) Model ═══
+    function buildBicycle() {
+      const group = new THREE.Group();
+      const p = params.bicycle;
+      const a = p.a.val;
+      const b = p.b.val;
+      const wheelR = 0.3;
+      const bodyH = 0.3;
+      const bodyLen = a + b + 0.4;
+      const suspLen = 0.7;
+
+      // Front wheel
+      const fWheel = createWheel(wheelR, 0.2);
+      fWheel.position.set(a, wheelR, 0);
+      group.add(fWheel);
+
+      // Rear wheel
+      const rWheel = createWheel(wheelR, 0.2);
+      rWheel.position.set(-b, wheelR, 0);
+      group.add(rWheel);
+
+      // Front unsprung mass
+      const fUnsprung = createMassBlock(0.4, 0.1, 0.4, COLORS.mass);
+      fUnsprung.position.set(a, wheelR + 0.2, 0);
+      group.add(fUnsprung);
+
+      // Rear unsprung mass
+      const rUnsprung = createMassBlock(0.4, 0.1, 0.4, COLORS.mass);
+      rUnsprung.position.set(-b, wheelR + 0.2, 0);
+      group.add(rUnsprung);
+
+      // Front suspension spring + damper
+      const fSpring = createSpringMesh(0.1, suspLen, 6, 0.018, COLORS.spring);
+      group.add(fSpring);
+      const fDamper = createDamperMesh(suspLen, 0.05, 0.03);
+      group.add(fDamper);
+
+      // Rear suspension spring + damper
+      const rSpring = createSpringMesh(0.1, suspLen, 6, 0.018, COLORS.spring);
+      group.add(rSpring);
+      const rDamper = createDamperMesh(suspLen, 0.05, 0.03);
+      group.add(rDamper);
+
+      // Body (sprung mass) - elongated box
+      const body = createMassBlock(bodyLen, bodyH, 0.6, COLORS.massLight);
+      group.add(body);
+
+      // CG marker
+      const cgGeo = new THREE.SphereGeometry(0.05, 12, 12);
+      const cgMat = new THREE.MeshStandardMaterial({
+        color: COLORS.amber, emissive: COLORS.amber, emissiveIntensity: 0.5
+      });
+      const cg = new THREE.Mesh(cgGeo, cgMat);
+      group.add(cg);
+
+      // Road
+      const road = createRoadSurface(16, 1.5);
+      group.add(road);
+
+      modelParts = {
+        fWheel, rWheel, fUnsprung, rUnsprung,
+        fSpring, fDamper, rSpring, rDamper,
+        body, cg, road
+      };
+
+      // Initial layout
+      const suspBase = wheelR + 0.25;
+      updateSpringPos(fSpring, suspBase, suspBase + suspLen, a - 0.12, 0);
+      updateDamperPos(fDamper, suspBase, suspBase + suspLen, a + 0.12, 0);
+      updateSpringPos(rSpring, suspBase, suspBase + suspLen, -b - 0.12, 0);
+      updateDamperPos(rDamper, suspBase, suspBase + suspLen, -b + 0.12, 0);
+      body.position.set((a - b) / 2, suspBase + suspLen + bodyH / 2, 0);
+      cg.position.set(0, suspBase + suspLen + bodyH / 2, 0);
+
+      camera.position.set(4, 2.5, 4);
+      controls.target.set(0, 1.0, 0);
+
+      return group;
+    }
+
+    // ═══ Full Car (6+ DoF) Model ═══
+    function buildFullCar() {
+      const group = new THREE.Group();
+      const p = params.fullcar;
+      const a = 1.3; // CG to front
+      const b = 1.3; // CG to rear
+      const tf = p.tf.val / 2;
+      const tr = p.tr.val / 2;
+      const wheelR = 0.28;
+      const bodyH = 0.35;
+      const bodyW = Math.max(p.tf.val, p.tr.val) + 0.2;
+      const bodyLen = a + b + 0.3;
+      const suspLen = 0.6;
+
+      const corners = [
+        { x: a, z: tf, label: 'FL' },
+        { x: a, z: -tf, label: 'FR' },
+        { x: -b, z: tr, label: 'RL' },
+        { x: -b, z: -tr, label: 'RR' },
+      ];
+
+      const wheels = [];
+      const unsprungs = [];
+      const springs = [];
+      const dampers = [];
+
+      corners.forEach((c, i) => {
+        const w = createWheel(wheelR, 0.15);
+        w.position.set(c.x, wheelR, c.z);
+        group.add(w);
+        wheels.push(w);
+
+        const u = createMassBlock(0.3, 0.08, 0.25, COLORS.mass);
+        u.position.set(c.x, wheelR + 0.18, c.z);
+        group.add(u);
+        unsprungs.push(u);
+
+        const s = createSpringMesh(0.08, suspLen, 5, 0.015, COLORS.spring);
+        group.add(s);
+        springs.push(s);
+
+        const d = createDamperMesh(suspLen, 0.04, 0.025);
+        group.add(d);
+        dampers.push(d);
+      });
+
+      // Body
+      const body = createMassBlock(bodyLen, bodyH, bodyW, COLORS.massLight);
+      group.add(body);
+
+      // CG marker
+      const cgGeo = new THREE.SphereGeometry(0.06, 12, 12);
+      const cgMat = new THREE.MeshStandardMaterial({
+        color: COLORS.amber, emissive: COLORS.amber, emissiveIntensity: 0.5
+      });
+      const cg = new THREE.Mesh(cgGeo, cgMat);
+      group.add(cg);
+
+      // Road
+      const road = createRoadSurface(18, bodyW + 2);
+      group.add(road);
+
+      modelParts = { wheels, unsprungs, springs, dampers, body, cg, road, corners };
+
+      // Initial positions
+      const suspBase = wheelR + 0.22;
+      corners.forEach((c, i) => {
+        const sOff = i % 2 === 0 ? 0.1 : -0.1;
+        updateSpringPos(springs[i], suspBase, suspBase + suspLen, c.x, c.z + sOff);
+        updateDamperPos(dampers[i], suspBase, suspBase + suspLen, c.x, c.z - sOff);
+      });
+      body.position.set(0, suspBase + suspLen + bodyH / 2, 0);
+      cg.position.set(0, suspBase + suspLen + bodyH / 2, 0);
+
+      camera.position.set(5, 3.5, 5);
+      controls.target.set(0, 1.0, 0);
+
+      return group;
+    }
+
+    // ── PHYSICS SIMULATION ──────────────────────────────────────────
+
+    function initPhysics() {
+      state.time = 0;
+      state.plotHistory = { body: [], wheel: [], road: [] };
+
+      if (state.model === 'quarter') {
+        // State: [z_s, dz_s, z_u, dz_u]
+        physState = [0, 0, 0, 0];
+      } else if (state.model === 'bicycle') {
+        // State: [z, dz, theta, dtheta, z_uf, dz_uf, z_ur, dz_ur]
+        physState = [0, 0, 0, 0, 0, 0, 0, 0];
+      } else {
+        // State: [z, dz, phi, dphi, theta, dtheta, z_u1..4, dz_u1..4]
+        physState = new Array(14).fill(0);
+      }
+    }
+
+    function simulateStep(dt) {
+      const t = state.time;
+
+      if (state.model === 'quarter') {
+        const p = params.quarter;
+        const ms = p.ms.val, mu = p.mu.val;
+        const ks = p.ks.val, cs = p.cs.val, kt = p.kt.val;
+        const zr = roadInput(t);
+
+        // RK4 integration
+        const deriv = (s) => {
+          const [zs, dzs, zu, dzu] = s;
+          const fSusp = ks * (zs - zu) + cs * (dzs - dzu);
+          const fTire = kt * (zu - zr);
+          return [
+            dzs,
+            (-fSusp) / ms,
+            dzu,
+            (fSusp - fTire) / mu,
+          ];
+        };
+
+        physState = rk4Step(physState, deriv, dt);
+
+      } else if (state.model === 'bicycle') {
+        const p = params.bicycle;
+        const m = p.m.val, Iy = p.Iy.val;
+        const kf = p.kf.val, cf = p.cf.val, kr = p.kr.val, cr = p.cr.val;
+        const a = p.a.val, b = p.b.val;
+        const kt = 200000;
+        const speedSafe = Math.max(state.speed, 0.1);
+
+        const zrf = roadInput(t, 0);
+        const zrr = roadInput(t, (a + b) / speedSafe);
+
+        const deriv = (s) => {
+          const [z, dz, th, dth, zuf, dzuf, zur, dzur] = s;
+
+          const zf = z + a * th;
+          const dzf = dz + a * dth;
+          const zr_body = z - b * th;
+          const dzr_body = dz - b * dth;
+
+          const fSf = kf * (zf - zuf) + cf * (dzf - dzuf);
+          const fSr = kr * (zr_body - zur) + cr * (dzr_body - dzur);
+          const fTf = kt * (zuf - zrf);
+          const fTr = kt * (zur - zrr);
+
+          return [
+            dz,
+            (-fSf - fSr) / m,
+            dth,
+            (-a * fSf + b * fSr) / Iy,
+            dzuf,
+            (fSf - fTf) / 40,
+            dzur,
+            (fSr - fTr) / 40,
+          ];
+        };
+
+        physState = rk4Step(physState, deriv, dt);
+
+      } else {
+        const p = params.fullcar;
+        const m = p.m.val, Ix = p.Ix.val, Iy = p.Iy.val;
+        const kf = p.kf.val, kr = p.kr.val, cf = p.cf.val, cr = p.cr.val;
+        const tf2 = p.tf.val / 2, tr2 = p.tr.val / 2;
+        const a = 1.3, b = 1.3;
+        const kt = 200000, mu = 40;
+
+        const corners = [
+          { x: a, z: tf2 },
+          { x: a, z: -tf2 },
+          { x: -b, z: tr2 },
+          { x: -b, z: -tr2 },
+        ];
+        const ks_arr = [kf, kf, kr, kr];
+        const cs_arr = [cf, cf, cr, cr];
+
+        const speedSafe = Math.max(state.speed, 0.1);
+        const zr_arr = corners.map(c => roadInput(t, -c.x / speedSafe));
+
+        const deriv = (s) => {
+          const [z, dz, phi, dphi, th, dth, ...wheelState] = s;
+          let Fz = 0, Mx = 0, My = 0;
+          const wheelDerivs = [];
+
+          for (let i = 0; i < 4; i++) {
+            const zu = wheelState[i * 2];
+            const dzu = wheelState[i * 2 + 1];
+            const c = corners[i];
+
+            const zCorner = z + c.x * th - c.z * phi;
+            const dzCorner = dz + c.x * dth - c.z * dphi;
+
+            const fS = ks_arr[i] * (zCorner - zu) + cs_arr[i] * (dzCorner - dzu);
+            const fT = kt * (zu - zr_arr[i]);
+
+            Fz -= fS;
+            My -= c.x * fS;
+            Mx -= c.z * fS;  // Correct sign for roll moment
+
+            wheelDerivs.push(dzu);
+            wheelDerivs.push((fS - fT) / mu);
+          }
+
+          return [dz, Fz / m, dphi, Mx / Ix, dth, My / Iy, ...wheelDerivs];
+        };
+
+        physState = rk4Step(physState, deriv, dt);
+      }
+
+      state.time += dt;
+    }
+
+    function rk4Step(y, f, h) {
+      const k1 = f(y);
+      const k2 = f(y.map((v, i) => v + h / 2 * k1[i]));
+      const k3 = f(y.map((v, i) => v + h / 2 * k2[i]));
+      const k4 = f(y.map((v, i) => v + h * k3[i]));
+      return y.map((v, i) => v + h / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]));
+    }
+
+    // ── UPDATE 3D FROM PHYSICS ──────────────────────────────────────
+    const VIS_SCALE = 3.0; // Amplify displacements for visibility
+
+    function updateVisuals() {
+      if (!modelParts || Object.keys(modelParts).length === 0) return;
+      const t = state.time;
+
+      if (state.model === 'quarter') {
+        const [zs, dzs, zu, dzu] = physState;
+        const zr = roadInput(t);
+
+        const wheelR = 0.3;
+        const baseY = wheelR;
+        const unsprungH = 0.15;
+        const sprungH = 0.5;
+        const suspLen = 0.8;
+
+        const roadY = zr * VIS_SCALE;
+        const uY = baseY + 0.05 + zu * VIS_SCALE;
+        const sY = baseY + 0.05 + zs * VIS_SCALE;
+
+        modelParts.wheel.position.y = baseY + roadY;
+        modelParts.wheel.rotation.x = -state.time * state.speed * 2;
+        modelParts.unsprung.position.y = uY + unsprungH / 2;
+
+        const suspBottom = uY + unsprungH / 2 + unsprungH / 2;
+        const suspTop = sY + suspLen;
+        updateSpringPos(modelParts.suspSpring, suspBottom, suspTop, -0.2, 0);
+        updateDamperPos(modelParts.suspDamper, suspBottom, suspTop, 0.2, 0);
+
+        modelParts.sprung.position.y = suspTop + sprungH / 2;
+        modelParts.cg.position.y = suspTop + sprungH / 2;
+
+        updateSpringPos(modelParts.tireSpring, roadY + 0.02, uY, 0, 0);
+
+        // Update road mesh
+        updateRoadMesh(modelParts.road, t);
+
+        // Plot data
+        state.plotHistory.body.push(zs * 1000);
+        state.plotHistory.wheel.push(zu * 1000);
+        state.plotHistory.road.push(zr * 1000);
+
+      } else if (state.model === 'bicycle') {
+        const [z, dz, th, dth, zuf, dzuf, zur, dzur] = physState;
+        const p = params.bicycle;
+        const a = p.a.val, b = p.b.val;
+        const wheelR = 0.3;
+        const suspLen = 0.7;
+        const bodyH = 0.3;
+        const suspBase_ref = wheelR + 0.25;
+
+        const speedSafe = Math.max(state.speed, 0.1);
+        const zrf = roadInput(t, 0);
+        const zrr = roadInput(t, (a + b) / speedSafe);
+
+        const fWheelY = wheelR + zrf * VIS_SCALE;
+        const rWheelY = wheelR + zrr * VIS_SCALE;
+        modelParts.fWheel.position.y = fWheelY;
+        modelParts.rWheel.position.y = rWheelY;
+        modelParts.fWheel.rotation.x = -state.time * state.speed * 2;
+        modelParts.rWheel.rotation.x = -state.time * state.speed * 2;
+
+        const fUnY = wheelR + 0.2 + zuf * VIS_SCALE;
+        const rUnY = wheelR + 0.2 + zur * VIS_SCALE;
+        modelParts.fUnsprung.position.y = fUnY;
+        modelParts.rUnsprung.position.y = rUnY;
+
+        const bodyZ = z * VIS_SCALE;
+        const bodyTh = th * VIS_SCALE;
+        const fBodyCorner = bodyZ + a * bodyTh + suspBase_ref + suspLen;
+        const rBodyCorner = bodyZ - b * bodyTh + suspBase_ref + suspLen;
+
+        updateSpringPos(modelParts.fSpring, fUnY + 0.05, fBodyCorner, a - 0.12, 0);
+        updateDamperPos(modelParts.fDamper, fUnY + 0.05, fBodyCorner, a + 0.12, 0);
+        updateSpringPos(modelParts.rSpring, rUnY + 0.05, rBodyCorner, -b - 0.12, 0);
+        updateDamperPos(modelParts.rDamper, rUnY + 0.05, rBodyCorner, -b + 0.12, 0);
+
+        const bodyCenterY = (fBodyCorner + rBodyCorner) / 2 + bodyH / 2;
+        modelParts.body.position.set((a - b) / 2, bodyCenterY, 0);
+        modelParts.body.rotation.z = -bodyTh;
+        modelParts.cg.position.set(0, bodyCenterY, 0);
+
+        updateRoadMesh(modelParts.road, t);
+
+        state.plotHistory.body.push(z * 1000);
+        state.plotHistory.wheel.push(zuf * 1000);
+        state.plotHistory.road.push(zrf * 1000);
+
+      } else {
+        const [z, dz, phi, dphi, th, dth, ...ws] = physState;
+        const p = params.fullcar;
+        const a = 1.3, b_dist = 1.3;
+        const tf2 = p.tf.val / 2, tr2 = p.tr.val / 2;
+        const wheelR = 0.28;
+        const suspLen = 0.6;
+        const bodyH = 0.35;
+        const suspBase_ref = wheelR + 0.22;
+
+        const corners = modelParts.corners;
+        const speedSafe = Math.max(state.speed, 0.1);
+
+        for (let i = 0; i < 4; i++) {
+          const c = corners[i];
+          const zu = ws[i * 2];
+          const zr_val = roadInput(state.time, -c.x / speedSafe);
+
+          const wheelY = wheelR + zr_val * VIS_SCALE;
+          modelParts.wheels[i].position.y = wheelY;
+          modelParts.wheels[i].rotation.x = -state.time * state.speed * 2;
+
+          const unY = wheelR + 0.18 + zu * VIS_SCALE;
+          modelParts.unsprungs[i].position.y = unY;
+
+          const zCorner = z + c.x * th - c.z * phi;
+          const cornerY = suspBase_ref + suspLen + zCorner * VIS_SCALE;
+
+          const sOff = i % 2 === 0 ? 0.1 : -0.1;
+          updateSpringPos(modelParts.springs[i], unY + 0.04, cornerY, c.x, c.z + sOff);
+          updateDamperPos(modelParts.dampers[i], unY + 0.04, cornerY, c.x, c.z - sOff);
+        }
+
+        const bodyCenterY = suspBase_ref + suspLen + z * VIS_SCALE + bodyH / 2;
+        modelParts.body.position.y = bodyCenterY;
+        modelParts.body.rotation.z = -th * VIS_SCALE;
+        modelParts.body.rotation.x = phi * VIS_SCALE;
+        modelParts.cg.position.y = bodyCenterY;
+
+        updateRoadMesh(modelParts.road, state.time);
+
+        state.plotHistory.body.push(z * 1000);
+        state.plotHistory.wheel.push(ws[0] * 1000);
+        state.plotHistory.road.push(roadInput(state.time) * 1000);
+      }
+
+      // Trim plot history
+      const max = state.maxPlotPoints;
+      ['body', 'wheel', 'road'].forEach(k => {
+        if (state.plotHistory[k].length > max) {
+          state.plotHistory[k] = state.plotHistory[k].slice(-max);
+        }
+      });
+    }
+
+    function updateRoadMesh(roadGroup, t) {
+      if (!roadGroup || !roadGroup.userData.mesh) return;
+      const mesh = roadGroup.userData.mesh;
+      const geo = mesh.geometry;
+      const pos = geo.attributes.position;
+      const segs = roadGroup.userData.segments;
+      // Road length comes from the first vertex X range
+      const halfLen = Math.abs(pos.getX(0));
+      const speedSafe = Math.max(state.speed, 0.1);
+
+      // Profile line + ribbon refs
+      const profileLine = roadGroup.userData.profileLine;
+      const ribbonMesh = roadGroup.userData.ribbonMesh;
+      const profilePos = profileLine ? profileLine.geometry.attributes.position : null;
+      const ribbonPos = ribbonMesh ? ribbonMesh.geometry.attributes.position : null;
+
+      for (let i = 0; i <= segs; i++) {
+        const xFrac = i / segs;
+        const x = (xFrac - 0.5) * halfLen * 2;
+        const roadY = roadInput(t + x / speedSafe) * VIS_SCALE;
+
+        // PlaneGeometry is XY, rotated -PI/2 around X → local Z maps to world Y
+        pos.setZ(i, roadY);
+        pos.setZ(segs + 1 + i, roadY);
+
+        // Update the 3D profile line (lives in world space, no rotation)
+        if (profilePos) {
+          profilePos.setY(i, roadY + 0.006);
+        }
+
+        // Update the ribbon mesh (two verts per segment point)
+        if (ribbonPos) {
+          ribbonPos.setY(i * 2, roadY + 0.004);
+          ribbonPos.setY(i * 2 + 1, roadY + 0.004);
+        }
+      }
+
+      pos.needsUpdate = true;
+      geo.computeVertexNormals();
+
+      if (profilePos) {
+        profilePos.needsUpdate = true;
+      }
+      if (ribbonPos) {
+        ribbonPos.needsUpdate = true;
+        ribbonMesh.geometry.computeVertexNormals();
+      }
+    }
+
+    // ── PLOT RENDERER ───────────────────────────────────────────────
+    const plotCanvas = document.getElementById('plot-canvas');
+    const plotCtx = plotCanvas.getContext('2d');
+
+    function drawPlot() {
+      const w = plotCanvas.width;
+      const h = plotCanvas.height;
+      plotCtx.fillStyle = '#27272a';
+      plotCtx.fillRect(0, 0, w, h);
+
+      // Grid
+      plotCtx.strokeStyle = '#3f3f46';
+      plotCtx.lineWidth = 0.5;
+      plotCtx.beginPath();
+      for (let y = 0; y <= h; y += h / 4) {
+        plotCtx.moveTo(0, y);
+        plotCtx.lineTo(w, y);
+      }
+      plotCtx.stroke();
+
+      // Zero line
+      plotCtx.strokeStyle = '#52525b';
+      plotCtx.lineWidth = 1;
+      plotCtx.beginPath();
+      plotCtx.moveTo(0, h / 2);
+      plotCtx.lineTo(w, h / 2);
+      plotCtx.stroke();
+
+      // Find range
+      const allData = [...state.plotHistory.body, ...state.plotHistory.wheel, ...state.plotHistory.road];
+      let maxVal = Math.max(5, ...allData.map(Math.abs));
+      maxVal = Math.ceil(maxVal / 5) * 5;
+
+      // Axis label
+      plotCtx.fillStyle = '#71717a';
+      plotCtx.font = '9px JetBrains Mono';
+      plotCtx.fillText(`+${maxVal.toFixed(0)}mm`, 2, 10);
+      plotCtx.fillText(`-${maxVal.toFixed(0)}mm`, 2, h - 3);
+
+      const drawLine = (data, color) => {
+        if (data.length < 2) return;
+        plotCtx.strokeStyle = color;
+        plotCtx.lineWidth = 1.5;
+        plotCtx.beginPath();
+        data.forEach((v, i) => {
+          const x = (i / (state.maxPlotPoints - 1)) * w;
+          const y = h / 2 - (v / maxVal) * (h / 2 - 5);
+          if (i === 0) plotCtx.moveTo(x, y);
+          else plotCtx.lineTo(x, y);
+        });
+        plotCtx.stroke();
+      };
+
+      drawLine(state.plotHistory.road, '#71717a');
+      drawLine(state.plotHistory.wheel, '#4ade80');
+      drawLine(state.plotHistory.body, '#f59e0b');
+    }
+
+    // ── MODEL SWITCHING ─────────────────────────────────────────────
+    function clearModel() {
+      if (modelGroup) {
+        scene.remove(modelGroup);
+        modelGroup.traverse(obj => {
+          if (obj.geometry) obj.geometry.dispose();
+          if (obj.material) {
+            if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+            else obj.material.dispose();
+          }
+        });
+        modelGroup = null;
+      }
+      modelParts = {};
+    }
+
+    window.switchModel = function(name) {
+      state.model = name;
+      clearModel();
+
+      if (name === 'quarter') {
+        modelGroup = buildQuarterCar();
+        document.getElementById('model-label').textContent = 'quarter_car_2dof.sim';
+      } else if (name === 'bicycle') {
+        modelGroup = buildBicycle();
+        document.getElementById('model-label').textContent = 'bicycle_4dof.sim';
+      } else {
+        modelGroup = buildFullCar();
+        document.getElementById('model-label').textContent = 'full_car_7dof.sim';
+      }
+
+      scene.add(modelGroup);
+      initPhysics();
+      buildParamsUI();
+      buildModelInfo();
+      updateTabs();
+    };
+
+    function updateTabs() {
+      document.querySelectorAll('#model-tabs button').forEach(btn => {
+        if (btn.dataset.model === state.model) {
+          btn.className = btn.className.replace('tab-inactive', 'tab-active');
+        } else {
+          btn.className = btn.className.replace('tab-active', 'tab-inactive');
+        }
+      });
+    }
+
+    // ── PARAMS UI ───────────────────────────────────────────────────
+    function buildParamsUI() {
+      const container = document.getElementById('params-container');
+      const p = params[state.model];
+
+      let html = '<span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">Parameters</span>';
+      html += '<div class="mt-3 space-y-3">';
+
+      for (const [key, cfg] of Object.entries(p)) {
+        const displayVal = cfg.val >= 1000 ? (cfg.val / 1000).toFixed(1) + 'k' : cfg.val;
+        html += `
+          <div>
+            <div class="flex justify-between items-center mb-1">
+              <label class="text-xs text-zinc-500 font-mono">${cfg.label}</label>
+              <span class="text-xs font-mono text-amber-400" id="pval-${key}">${cfg.val} ${cfg.unit}</span>
+            </div>
+            <input type="range" min="${cfg.min}" max="${cfg.max}" step="${cfg.step}" value="${cfg.val}"
+              class="slider-amber" data-param="${key}"
+              oninput="updateParam('${key}', this.value)">
+          </div>`;
+      }
+
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    window.updateParam = function(key, val) {
+      const p = params[state.model];
+      if (p[key]) {
+        p[key].val = parseFloat(val);
+        const label = document.getElementById(`pval-${key}`);
+        if (label) label.textContent = `${p[key].val} ${p[key].unit}`;
+      }
+    };
+
+    // ── MODEL INFO ──────────────────────────────────────────────────
+    function buildModelInfo() {
+      const container = document.getElementById('model-info');
+      const infos = {
+        quarter: {
+          title: 'Quarter Car Model',
+          dof: '2 DoF',
+          desc: 'The simplest suspension model. Represents one corner of the vehicle with a sprung mass (body) and unsprung mass (wheel assembly). Used for ride comfort and handling analysis.',
+          equations: [
+            'm_s * z\u0308_s = -k_s(z_s - z_u) - c_s(z\u0307_s - z\u0307_u)',
+            'm_u * z\u0308_u = k_s(z_s - z_u) + c_s(z\u0307_s - z\u0307_u) - k_t(z_u - z_r)',
+          ],
+        },
+        bicycle: {
+          title: 'Bicycle (Half-Car) Model',
+          dof: '4 DoF',
+          desc: 'Captures heave and pitch dynamics by modeling front and rear suspensions with a rigid body. Named "bicycle" because front and rear axles are collapsed to single points on the centerline.',
+          equations: [
+            'm * z\u0308 = -F_sf - F_sr',
+            'I_y * \u03B8\u0308 = -a * F_sf + b * F_sr',
+            'F_s = k(z_corner - z_u) + c(z\u0307_corner - z\u0307_u)',
+          ],
+        },
+        fullcar: {
+          title: 'Full Car Model',
+          dof: '7 DoF (3 body + 4 wheel)',
+          desc: 'Complete vehicle model capturing heave, pitch, and roll of the body along with vertical motion of all four unsprung masses. Essential for analyzing coupled ride, handling, and stability.',
+          equations: [
+            'm * z\u0308 = -\u03A3 F_si',
+            'I_x * \u03C6\u0308 = \u03A3 t_i * F_si',
+            'I_y * \u03B8\u0308 = -\u03A3 l_i * F_si',
+            'm_ui * z\u0308_ui = F_si - k_ti(z_ui - z_ri)',
+          ],
+        },
+      };
+
+      const info = infos[state.model];
+      let html = `
+        <div class="flex items-center gap-2 mb-2">
+          <span class="font-mono font-bold text-zinc-100 text-sm">${info.title}</span>
+          <span class="text-xs px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded font-mono">${info.dof}</span>
+        </div>
+        <p class="text-xs text-zinc-400 leading-relaxed mb-3">${info.desc}</p>
+        <div class="bg-zinc-800 border border-zinc-700 rounded-lg p-3">
+          <span class="text-xs font-mono text-zinc-500 block mb-2">Equations of Motion</span>
+          ${info.equations.map(eq => `<div class="text-xs font-mono text-amber-400/80 mb-1">${eq}</div>`).join('')}
+        </div>
+      `;
+      container.innerHTML = html;
+    }
+
+    // ── PLAYBACK CONTROLS ───────────────────────────────────────────
+    window.togglePlay = function() {
+      state.playing = !state.playing;
+      const btn = document.getElementById('btn-play');
+      const text = document.getElementById('btn-play-text');
+      if (state.playing) {
+        text.textContent = 'Pause';
+        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg><span id="btn-play-text">Pause</span>';
+      } else {
+        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span id="btn-play-text">Play</span>';
+      }
+    };
+
+    window.resetSim = function() {
+      state.playing = false;
+      initPhysics();
+      // Reset visuals
+      switchModel(state.model);
+      const btn = document.getElementById('btn-play');
+      btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span id="btn-play-text">Play</span>';
+    };
+
+    window.setRoadType = function(type) {
+      state.roadType = type;
+      document.querySelectorAll('.road-btn').forEach(btn => {
+        if (btn.dataset.road === type) {
+          btn.className = btn.className.replace('tab-inactive', 'tab-active');
+        } else {
+          btn.className = btn.className.replace('tab-active', 'tab-inactive');
+        }
+      });
+      resetSim();
+    };
+
+    window.updateSpeed = function(val) {
+      state.speed = parseFloat(val);
+      document.getElementById('val-speed').textContent = `${state.speed.toFixed(1)} m/s`;
+    };
+
+    window.updateBump = function(val) {
+      state.bumpHeight = parseFloat(val);
+      document.getElementById('val-bump').textContent = `${state.bumpHeight.toFixed(3)} m`;
+    };
+
+    window.toggleFullscreen = function() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+      } else {
+        document.exitFullscreen();
+      }
+    };
+
+    // ── RESIZE ──────────────────────────────────────────────────────
+    function onResize() {
+      const container = document.getElementById('viewport-container');
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    }
+
+    window.addEventListener('resize', onResize);
+    new ResizeObserver(onResize).observe(document.getElementById('viewport-container'));
+
+    // ── ANIMATION LOOP ──────────────────────────────────────────────
+    let lastTime = performance.now();
+    let frameCount = 0;
+    let fpsAccum = 0;
+
+    function animate(now) {
+      requestAnimationFrame(animate);
+
+      // FPS counter
+      frameCount++;
+      fpsAccum += now - lastTime;
+      if (fpsAccum >= 500) {
+        const fps = Math.round(frameCount / (fpsAccum / 1000));
+        document.getElementById('fps-badge').textContent = `${fps} fps`;
+        frameCount = 0;
+        fpsAccum = 0;
+      }
+      lastTime = now;
+
+      // Physics
+      if (state.playing) {
+        const subSteps = 4;
+        const subDt = state.dt / subSteps;
+        for (let i = 0; i < subSteps; i++) {
+          simulateStep(subDt);
+        }
+        updateVisuals();
+        document.getElementById('time-badge').textContent = `t = ${state.time.toFixed(2)}s`;
+      }
+
+      // Plot
+      drawPlot();
+
+      // Three.js
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    // ── INIT ────────────────────────────────────────────────────────
+    switchModel('quarter');
+    onResize();
+    requestAnimationFrame(animate);
+
+    // PWA registration
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+
+    // Initialize Lucide icons
+    lucide.createIcons();
+  </script>
+</body>
+</html>

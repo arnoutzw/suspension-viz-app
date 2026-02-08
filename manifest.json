@@ -1,0 +1,20 @@
+{
+  "name": "SuspensionViz — Car Suspension Model Visualizer",
+  "short_name": "SuspensionViz",
+  "description": "Interactive 3D visualization of car suspension models: Quarter Car, Bicycle, and Full Car (6+ DoF)",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "categories": ["education", "utilities"],
+  "lang": "en"
+}
