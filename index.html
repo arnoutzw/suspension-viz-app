@@ -968,7 +968,7 @@
 
             Fz -= fS;
             My -= c.x * fS;
-            Mx -= c.z * fS;  // Correct sign for roll moment
+            Mx += c.z * fS;
 
             wheelDerivs.push(dzu);
             wheelDerivs.push((fS - fT) / mu);
@@ -1080,7 +1080,7 @@
 
         const bodyCenterY = (fBodyCorner + rBodyCorner) / 2 + bodyH / 2;
         modelParts.body.position.set((a - b) / 2, bodyCenterY, 0);
-        modelParts.body.rotation.z = -bodyTh;
+        modelParts.body.rotation.z = bodyTh;
         modelParts.cg.position.set(0, bodyCenterY, 0);
 
         updateRoadMesh(modelParts.road, t);
@@ -1124,7 +1124,7 @@
 
         const bodyCenterY = suspBase_ref + suspLen + z * VIS_SCALE + bodyH / 2;
         modelParts.body.position.y = bodyCenterY;
-        modelParts.body.rotation.z = -th * VIS_SCALE;
+        modelParts.body.rotation.z = th * VIS_SCALE;
         modelParts.body.rotation.x = phi * VIS_SCALE;
         modelParts.cg.position.y = bodyCenterY;
 
