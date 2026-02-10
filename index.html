@@ -997,7 +997,7 @@
         const sY = baseY + 0.05 + zs * VIS_SCALE;
 
         modelParts.wheel.position.y = baseY + roadY;
-        modelParts.wheel.rotation.x = -state.time * state.speed * 2;
+        modelParts.wheel.rotation.z = -state.time * state.speed * 2;
         modelParts.unsprung.position.y = uY + unsprungH / 2;
 
         const suspBottom = uY + unsprungH / 2 + unsprungH / 2;
@@ -1035,8 +1035,8 @@
         const rWheelY = wheelR + zrr * VIS_SCALE;
         modelParts.fWheel.position.y = fWheelY;
         modelParts.rWheel.position.y = rWheelY;
-        modelParts.fWheel.rotation.x = -state.time * state.speed * 2;
-        modelParts.rWheel.rotation.x = -state.time * state.speed * 2;
+        modelParts.fWheel.rotation.z = -state.time * state.speed * 2;
+        modelParts.rWheel.rotation.z = -state.time * state.speed * 2;
 
         const fUnY = wheelR + 0.2 + zuf * VIS_SCALE;
         const rUnY = wheelR + 0.2 + zur * VIS_SCALE;
@@ -1084,7 +1084,7 @@
 
           const wheelY = wheelR + zr_val * VIS_SCALE;
           modelParts.wheels[i].position.y = wheelY;
-          modelParts.wheels[i].rotation.x = -state.time * state.speed * 2;
+          modelParts.wheels[i].rotation.z = -state.time * state.speed * 2;
 
           const unY = wheelR + 0.18 + zu * VIS_SCALE;
           modelParts.unsprungs[i].position.y = unY;
