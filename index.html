@@ -876,6 +876,12 @@
 
         physState = rk4Step(physState, deriv, dt);
 
+        // Tire-road contact constraint: wheel cannot penetrate road surface
+        if (physState[2] < zr) {
+          physState[2] = zr;
+          if (physState[3] < 0) physState[3] = 0;
+        }
+
       } else if (state.model === 'bicycle') {
         const p = params.bicycle;
         const m = p.m.val, Iy = p.Iy.val;
@@ -913,6 +919,16 @@
         };
 
         physState = rk4Step(physState, deriv, dt);
+
+        // Tire-road contact constraints: wheels cannot penetrate road surface
+        if (physState[4] < zrf) {
+          physState[4] = zrf;
+          if (physState[5] < 0) physState[5] = 0;
+        }
+        if (physState[6] < zrr) {
+          physState[6] = zrr;
+          if (physState[7] < 0) physState[7] = 0;
+        }
 
       } else {
         const p = params.fullcar;
@@ -962,6 +978,15 @@
         };
 
         physState = rk4Step(physState, deriv, dt);
+
+        // Tire-road contact constraints: wheels cannot penetrate road surface
+        for (let i = 0; i < 4; i++) {
+          const idx = 6 + i * 2;
+          if (physState[idx] < zr_arr[i]) {
+            physState[idx] = zr_arr[i];
+            if (physState[idx + 1] < 0) physState[idx + 1] = 0;
+          }
+        }
       }
 
       state.time += dt;
@@ -996,7 +1021,7 @@
         const uY = baseY + 0.05 + zu * VIS_SCALE;
         const sY = baseY + 0.05 + zs * VIS_SCALE;
 
-        modelParts.wheel.position.y = baseY + roadY;
+        modelParts.wheel.position.y = Math.max(wheelR, baseY + roadY);
         modelParts.wheel.rotation.z = -state.time * state.speed * 2;
         modelParts.unsprung.position.y = uY + unsprungH / 2;
 
@@ -1031,8 +1056,8 @@
         const zrf = roadInput(t, 0);
         const zrr = roadInput(t, (a + b) / speedSafe);
 
-        const fWheelY = wheelR + zrf * VIS_SCALE;
-        const rWheelY = wheelR + zrr * VIS_SCALE;
+        const fWheelY = Math.max(wheelR, wheelR + zrf * VIS_SCALE);
+        const rWheelY = Math.max(wheelR, wheelR + zrr * VIS_SCALE);
         modelParts.fWheel.position.y = fWheelY;
         modelParts.rWheel.position.y = rWheelY;
         modelParts.fWheel.rotation.z = -state.time * state.speed * 2;
@@ -1082,7 +1107,7 @@
           const zu = ws[i * 2];
           const zr_val = roadInput(state.time, -c.x / speedSafe);
 
-          const wheelY = wheelR + zr_val * VIS_SCALE;
+          const wheelY = Math.max(wheelR, wheelR + zr_val * VIS_SCALE);
           modelParts.wheels[i].position.y = wheelY;
           modelParts.wheels[i].rotation.z = -state.time * state.speed * 2;
 
@@ -1306,6 +1331,8 @@
         p[key].val = parseFloat(val);
         const label = document.getElementById(`pval-${key}`);
         if (label) label.textContent = `${p[key].val} ${p[key].unit}`;
+        initPhysics();
+        updateVisuals();
       }
     };
 
