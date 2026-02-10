@@ -53,6 +53,14 @@
     @keyframes pulse-glow { 0%,100% { box-shadow: 0 0 8px rgba(245,158,11,0.2); } 50% { box-shadow: 0 0 16px rgba(245,158,11,0.4); } }
     .glow-pulse { animation: pulse-glow 2s ease-in-out infinite; }
     .plot-canvas { image-rendering: pixelated; }
+    #controls-panel {
+      transition: margin-right 0.3s ease, opacity 0.3s ease;
+    }
+    #controls-panel.collapsed {
+      margin-right: -320px;
+      opacity: 0;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body class="bg-zinc-950 text-zinc-300 font-sans h-full flex flex-col">
@@ -82,6 +90,9 @@
     </nav>
     <div class="flex items-center gap-2">
       <span class="text-xs px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded font-mono" id="fps-badge">60 fps</span>
+      <button onclick="togglePanel()" id="btn-panel" title="Toggle control panel" class="text-zinc-400 hover:text-amber-400 hover:bg-zinc-800 p-1.5 rounded-lg transition-colors">
+        <i data-lucide="panel-right" class="w-4 h-4"></i>
+      </button>
       <button onclick="toggleFullscreen()" class="text-zinc-400 hover:text-amber-400 hover:bg-zinc-800 p-1.5 rounded-lg transition-colors">
         <i data-lucide="maximize-2" class="w-4 h-4"></i>
       </button>
@@ -890,8 +901,8 @@
         const kt = 200000;
         const speedSafe = Math.max(state.speed, 0.1);
 
-        const zrf = roadInput(t, 0);
-        const zrr = roadInput(t, (a + b) / speedSafe);
+        const zrf = roadInput(t, -a);
+        const zrr = roadInput(t, b);
 
         const deriv = (s) => {
           const [z, dz, th, dth, zuf, dzuf, zur, dzur] = s;
@@ -948,7 +959,7 @@
         const cs_arr = [cf, cf, cr, cr];
 
         const speedSafe = Math.max(state.speed, 0.1);
-        const zr_arr = corners.map(c => roadInput(t, -c.x / speedSafe));
+        const zr_arr = corners.map(c => roadInput(t, -c.x));
 
         const deriv = (s) => {
           const [z, dz, phi, dphi, th, dth, ...wheelState] = s;
@@ -1053,8 +1064,8 @@
         const suspBase_ref = wheelR + 0.25;
 
         const speedSafe = Math.max(state.speed, 0.1);
-        const zrf = roadInput(t, 0);
-        const zrr = roadInput(t, (a + b) / speedSafe);
+        const zrf = roadInput(t, -a);
+        const zrr = roadInput(t, b);
 
         const fWheelY = Math.max(wheelR, wheelR + zrf * VIS_SCALE);
         const rWheelY = Math.max(wheelR, wheelR + zrr * VIS_SCALE);
@@ -1105,7 +1116,7 @@
         for (let i = 0; i < 4; i++) {
           const c = corners[i];
           const zu = ws[i * 2];
-          const zr_val = roadInput(state.time, -c.x / speedSafe);
+          const zr_val = roadInput(state.time, -c.x);
 
           const wheelY = Math.max(wheelR, wheelR + zr_val * VIS_SCALE);
           modelParts.wheels[i].position.y = wheelY;
@@ -1429,6 +1440,11 @@
     window.updateBump = function(val) {
       state.bumpHeight = parseFloat(val);
       document.getElementById('val-bump').textContent = `${state.bumpHeight.toFixed(3)} m`;
+    };
+
+    window.togglePanel = function() {
+      const panel = document.getElementById('controls-panel');
+      panel.classList.toggle('collapsed');
     };
 
     window.toggleFullscreen = function() {
