@@ -87,6 +87,9 @@
       <button onclick="switchModel('fullcar')" data-model="fullcar" class="tab-inactive text-xs font-mono px-3 py-1.5 rounded-lg border transition-all duration-200">
         Full Car
       </button>
+      <button onclick="switchModel('bose')" data-model="bose" class="tab-inactive text-xs font-mono px-3 py-1.5 rounded-lg border transition-all duration-200">
+        Bose Active
+      </button>
     </nav>
     <div class="flex items-center gap-2">
       <span class="text-xs px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded font-mono" id="fps-badge">60 fps</span>
@@ -186,7 +189,7 @@
       <div class="p-4 border-b border-zinc-800">
         <div class="flex items-center justify-between mb-3">
           <span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">Response</span>
-          <div class="flex gap-2">
+          <div class="flex gap-2" id="plot-legend">
             <span class="flex items-center gap-1"><span class="w-2 h-0.5 bg-amber-500 inline-block"></span><span class="text-xs font-mono text-zinc-500">body</span></span>
             <span class="flex items-center gap-1"><span class="w-2 h-0.5 bg-green-400 inline-block"></span><span class="text-xs font-mono text-zinc-500">wheel</span></span>
             <span class="flex items-center gap-1"><span class="w-2 h-0.5 bg-zinc-500 inline-block"></span><span class="text-xs font-mono text-zinc-500">road</span></span>
@@ -248,7 +251,7 @@
       speed: 5.0,
       bumpHeight: 0.05,
       roadType: 'bump',
-      plotHistory: { body: [], wheel: [], road: [] },
+      plotHistory: { body: [], wheel: [], road: [], force: [] },
       maxPlotPoints: 280,
     };
 
@@ -281,6 +284,15 @@
         cr: { val: 2200, min: 200, max: 6000, step: 100, label: 'Rear Damping', unit: 'Ns/m' },
         tf: { val: 1.5, min: 1.0, max: 2.0, step: 0.05, label: 'Front Track', unit: 'm' },
         tr: { val: 1.5, min: 1.0, max: 2.0, step: 0.05, label: 'Rear Track', unit: 'm' },
+      },
+      bose: {
+        ms: { val: 350, min: 100, max: 800, step: 10, label: 'Sprung Mass', unit: 'kg' },
+        mu: { val: 40, min: 10, max: 100, step: 5, label: 'Unsprung Mass', unit: 'kg' },
+        ks: { val: 25000, min: 5000, max: 60000, step: 1000, label: 'Spring Rate', unit: 'N/m' },
+        cs: { val: 1500, min: 200, max: 6000, step: 100, label: 'Damping', unit: 'Ns/m' },
+        kt: { val: 200000, min: 50000, max: 400000, step: 10000, label: 'Tire Stiffness', unit: 'N/m' },
+        csky: { val: 8000, min: 1000, max: 20000, step: 500, label: 'Skyhook Gain', unit: 'Ns/m' },
+        kact: { val: 15000, min: 0, max: 40000, step: 1000, label: 'Active Stiffness', unit: 'N/m' },
       },
     };
 
@@ -685,6 +697,103 @@
       return group;
     }
 
+    // ═══ Bose Active Suspension Model ═══
+    function buildBose() {
+      const group = new THREE.Group();
+      const p = params.bose;
+
+      const wheelR = 0.3;
+      const unsprungH = 0.15;
+      const sprungH = 0.5;
+      const baseY = wheelR;
+      const unsprungY = baseY + 0.05;
+      const suspLen = 0.8;
+      const springR = 0.12;
+
+      // Wheel
+      const wheel = createWheel(wheelR, 0.2);
+      wheel.position.set(0, baseY, 0);
+      group.add(wheel);
+
+      // Tire spring
+      const tireSpring = createSpringMesh(0.06, 0.3, 3, 0.015, 0x71717a);
+      group.add(tireSpring);
+
+      // Unsprung mass
+      const unsprung = createMassBlock(0.7, unsprungH, 0.5, COLORS.mass);
+      group.add(unsprung);
+
+      // Passive suspension spring (smaller, offset left)
+      const suspSpring = createSpringMesh(springR * 0.7, suspLen, 5, 0.015, COLORS.spring);
+      group.add(suspSpring);
+
+      // Passive damper (offset right)
+      const suspDamper = createDamperMesh(suspLen, 0.05, 0.03);
+      group.add(suspDamper);
+
+      // Active actuator (glowing cylinder in center — the Bose linear motor)
+      const actGeo = new THREE.CylinderGeometry(0.07, 0.07, suspLen, 16);
+      const actMat = new THREE.MeshStandardMaterial({
+        color: 0x06b6d4, metalness: 0.6, roughness: 0.3,
+        emissive: 0x06b6d4, emissiveIntensity: 0.4,
+      });
+      const actuator = new THREE.Mesh(actGeo, actMat);
+      actuator.castShadow = true;
+      group.add(actuator);
+
+      // Actuator glow ring (top and bottom)
+      const ringGeo = new THREE.TorusGeometry(0.09, 0.015, 8, 24);
+      const ringMat = new THREE.MeshStandardMaterial({
+        color: 0x06b6d4, emissive: 0x06b6d4, emissiveIntensity: 0.8,
+        metalness: 0.3, roughness: 0.4,
+      });
+      const ringTop = new THREE.Mesh(ringGeo, ringMat);
+      group.add(ringTop);
+      const ringBottom = new THREE.Mesh(ringGeo, ringMat.clone());
+      group.add(ringBottom);
+
+      // Sprung mass
+      const sprung = createMassBlock(1.0, sprungH, 0.7, COLORS.massLight);
+      group.add(sprung);
+
+      // CG indicator
+      const cgGeo = new THREE.SphereGeometry(0.04, 12, 12);
+      const cgMat = new THREE.MeshStandardMaterial({
+        color: COLORS.amber, emissive: COLORS.amber, emissiveIntensity: 0.5
+      });
+      const cg = new THREE.Mesh(cgGeo, cgMat);
+      group.add(cg);
+
+      // Road surface
+      const road = createRoadSurface(12, 1.5);
+      road.position.set(0, 0, 0);
+      group.add(road);
+
+      modelParts = { wheel, tireSpring, unsprung, suspSpring, suspDamper, actuator, ringTop, ringBottom, sprung, cg, road };
+
+      // Initial positions
+      const uY = baseY + wheelR * 0.3 + unsprungH / 2;
+      unsprung.position.set(0, uY, 0);
+      const sBottom = uY + unsprungH / 2;
+      const sTop = sBottom + suspLen;
+      updateSpringPos(suspSpring, sBottom, sTop, -0.25, 0);
+      updateDamperPos(suspDamper, sBottom, sTop, 0.25, 0);
+      actuator.position.set(0, (sBottom + sTop) / 2, 0);
+      ringTop.position.set(0, sTop, 0);
+      ringBottom.position.set(0, sBottom, 0);
+      sprung.position.set(0, sTop + sprungH / 2, 0);
+      cg.position.set(0, sTop + sprungH / 2, 0);
+
+      // Tire spring
+      updateSpringPos(tireSpring, 0.02, uY - unsprungH / 2, 0, 0);
+
+      // Camera
+      camera.position.set(3, 2.5, 3);
+      controls.target.set(0, 1.2, 0);
+
+      return group;
+    }
+
     // ═══ Bicycle (Half-Car) Model ═══
     function buildBicycle() {
       const group = new THREE.Group();
@@ -849,10 +958,14 @@
 
     function initPhysics() {
       state.time = 0;
-      state.plotHistory = { body: [], wheel: [], road: [] };
+      state.plotHistory = { body: [], wheel: [], road: [], force: [] };
+      state.lastActiveForce = 0;
 
       if (state.model === 'quarter') {
         // State: [z_s, dz_s, z_u, dz_u]
+        physState = [0, 0, 0, 0];
+      } else if (state.model === 'bose') {
+        // State: [z_s, dz_s, z_u, dz_u] (same as quarter-car, control is external)
         physState = [0, 0, 0, 0];
       } else if (state.model === 'bicycle') {
         // State: [z, dz, theta, dtheta, z_uf, dz_uf, z_ur, dz_ur]
@@ -888,6 +1001,39 @@
         physState = rk4Step(physState, deriv, dt);
 
         // Tire-road contact constraint: wheel cannot penetrate road surface
+        if (physState[2] < zr) {
+          physState[2] = zr;
+          if (physState[3] < 0) physState[3] = 0;
+        }
+
+      } else if (state.model === 'bose') {
+        const p = params.bose;
+        const ms = p.ms.val, mu = p.mu.val;
+        const ks = p.ks.val, cs = p.cs.val, kt = p.kt.val;
+        const csky = p.csky.val, kact = p.kact.val;
+        const zr = roadInput(t);
+
+        const deriv = (s) => {
+          const [zs, dzs, zu, dzu] = s;
+          const fSusp = ks * (zs - zu) + cs * (dzs - dzu);
+          const fTire = kt * (zu - zr);
+          // Skyhook control: damp absolute body velocity + active stiffness to hold position
+          const fActive = -csky * dzs - kact * zs;
+          return [
+            dzs,
+            (-fSusp + fActive) / ms,
+            dzu,
+            (fSusp - fTire - fActive) / mu,
+          ];
+        };
+
+        physState = rk4Step(physState, deriv, dt);
+
+        // Store active force for plotting (compute from current state)
+        const [zs_c, dzs_c] = physState;
+        state.lastActiveForce = -csky * dzs_c - kact * zs_c;
+
+        // Tire-road contact constraint
         if (physState[2] < zr) {
           physState[2] = zr;
           if (physState[3] < 0) physState[3] = 0;
@@ -1054,6 +1200,56 @@
         state.plotHistory.wheel.push(zu * 1000);
         state.plotHistory.road.push(zr * 1000);
 
+      } else if (state.model === 'bose') {
+        const [zs, dzs, zu, dzu] = physState;
+        const zr = roadInput(t);
+
+        const wheelR = 0.3;
+        const baseY = wheelR;
+        const unsprungH = 0.15;
+        const sprungH = 0.5;
+        const suspLen = 0.8;
+
+        const roadY = zr * VIS_SCALE;
+        const uY = baseY + 0.05 + zu * VIS_SCALE;
+        const sY = baseY + 0.05 + zs * VIS_SCALE;
+
+        modelParts.wheel.position.y = Math.max(wheelR, baseY + roadY);
+        modelParts.wheel.rotation.z = -state.time * state.speed * 2;
+        modelParts.unsprung.position.y = uY + unsprungH / 2;
+
+        const suspBottom = uY + unsprungH / 2 + unsprungH / 2;
+        const suspTop = sY + suspLen;
+        updateSpringPos(modelParts.suspSpring, suspBottom, suspTop, -0.25, 0);
+        updateDamperPos(modelParts.suspDamper, suspBottom, suspTop, 0.25, 0);
+
+        // Actuator position and glow intensity based on active force
+        const actMid = (suspBottom + suspTop) / 2;
+        const actLen = suspTop - suspBottom;
+        modelParts.actuator.position.set(0, actMid, 0);
+        modelParts.actuator.scale.y = Math.max(0.1, actLen / suspLen);
+        modelParts.ringTop.position.set(0, suspTop, 0);
+        modelParts.ringBottom.position.set(0, suspBottom, 0);
+
+        // Glow intensity proportional to active force magnitude
+        const forceNorm = Math.min(1, Math.abs(state.lastActiveForce) / 3000);
+        modelParts.actuator.material.emissiveIntensity = 0.2 + forceNorm * 0.8;
+        modelParts.ringTop.material.emissiveIntensity = 0.3 + forceNorm * 0.7;
+        modelParts.ringBottom.material.emissiveIntensity = 0.3 + forceNorm * 0.7;
+
+        modelParts.sprung.position.y = suspTop + sprungH / 2;
+        modelParts.cg.position.y = suspTop + sprungH / 2;
+
+        updateSpringPos(modelParts.tireSpring, roadY + 0.02, uY, 0, 0);
+
+        updateRoadMesh(modelParts.road, t);
+
+        // Plot data (force in N, displacement in mm)
+        state.plotHistory.body.push(zs * 1000);
+        state.plotHistory.wheel.push(zu * 1000);
+        state.plotHistory.road.push(zr * 1000);
+        state.plotHistory.force.push(state.lastActiveForce);
+
       } else if (state.model === 'bicycle') {
         const [z, dz, th, dth, zuf, dzuf, zur, dzur] = physState;
         const p = params.bicycle;
@@ -1148,7 +1344,7 @@
 
       // Trim plot history
       const max = state.maxPlotPoints;
-      ['body', 'wheel', 'road'].forEach(k => {
+      ['body', 'wheel', 'road', 'force'].forEach(k => {
         if (state.plotHistory[k].length > max) {
           state.plotHistory[k] = state.plotHistory[k].slice(-max);
         }
@@ -1260,6 +1456,34 @@
       drawLine(state.plotHistory.road, '#71717a');
       drawLine(state.plotHistory.wheel, '#4ade80');
       drawLine(state.plotHistory.body, '#f59e0b');
+
+      // Draw active force trace for Bose model (independent scale)
+      if (state.model === 'bose' && state.plotHistory.force.length > 1) {
+        let maxForce = Math.max(100, ...state.plotHistory.force.map(Math.abs));
+        maxForce = Math.ceil(maxForce / 100) * 100;
+
+        // Right-side axis label
+        plotCtx.fillStyle = '#06b6d4';
+        plotCtx.font = '9px JetBrains Mono';
+        plotCtx.textAlign = 'right';
+        plotCtx.fillText(`+${maxForce}N`, w - 2, 10);
+        plotCtx.fillText(`-${maxForce}N`, w - 2, h - 3);
+        plotCtx.textAlign = 'left';
+
+        // Draw force line with its own scale
+        plotCtx.strokeStyle = '#06b6d4';
+        plotCtx.lineWidth = 1.5;
+        plotCtx.setLineDash([4, 3]);
+        plotCtx.beginPath();
+        state.plotHistory.force.forEach((v, i) => {
+          const x = (i / (state.maxPlotPoints - 1)) * w;
+          const y = h / 2 - (v / maxForce) * (h / 2 - 5);
+          if (i === 0) plotCtx.moveTo(x, y);
+          else plotCtx.lineTo(x, y);
+        });
+        plotCtx.stroke();
+        plotCtx.setLineDash([]);
+      }
     }
 
     // ── MODEL SWITCHING ─────────────────────────────────────────────
@@ -1285,6 +1509,9 @@
       if (name === 'quarter') {
         modelGroup = buildQuarterCar();
         document.getElementById('model-label').textContent = 'quarter_car_2dof.sim';
+      } else if (name === 'bose') {
+        modelGroup = buildBose();
+        document.getElementById('model-label').textContent = 'bose_active_2dof.sim';
       } else if (name === 'bicycle') {
         modelGroup = buildBicycle();
         document.getElementById('model-label').textContent = 'bicycle_4dof.sim';
@@ -1298,6 +1525,19 @@
       buildParamsUI();
       buildModelInfo();
       updateTabs();
+
+      // Update plot legend (add force trace for Bose)
+      const legend = document.getElementById('plot-legend');
+      const baseLegend = `
+        <span class="flex items-center gap-1"><span class="w-2 h-0.5 bg-amber-500 inline-block"></span><span class="text-xs font-mono text-zinc-500">body</span></span>
+        <span class="flex items-center gap-1"><span class="w-2 h-0.5 bg-green-400 inline-block"></span><span class="text-xs font-mono text-zinc-500">wheel</span></span>
+        <span class="flex items-center gap-1"><span class="w-2 h-0.5 bg-zinc-500 inline-block"></span><span class="text-xs font-mono text-zinc-500">road</span></span>`;
+      if (name === 'bose') {
+        legend.innerHTML = baseLegend + `
+          <span class="flex items-center gap-1"><span class="w-2 h-0.5 inline-block" style="background:#06b6d4;"></span><span class="text-xs font-mono text-zinc-500">force</span></span>`;
+      } else {
+        legend.innerHTML = baseLegend;
+      }
     };
 
     function updateTabs() {
@@ -1379,6 +1619,16 @@
             'I_x * \u03C6\u0308 = \u03A3 t_i * F_si',
             'I_y * \u03B8\u0308 = -\u03A3 l_i * F_si',
             'm_ui * z\u0308_ui = F_si - k_ti(z_ui - z_ri)',
+          ],
+        },
+        bose: {
+          title: 'Bose Active Suspension',
+          dof: '2 DoF + Active Control',
+          desc: 'Quarter-car model augmented with an active linear actuator (inspired by Bose electromagnetic suspension). A skyhook controller applies force proportional to absolute body velocity to minimize body motion, while active stiffness holds the body at nominal height. The cyan trace in the plot shows the required actuator force.',
+          equations: [
+            'm_s * z\u0308_s = -F_susp + F_active',
+            'm_u * z\u0308_u = F_susp - k_t(z_u - z_r) - F_active',
+            'F_active = -c_sky * z\u0307_s - k_act * z_s',
           ],
         },
       };
