@@ -87,9 +87,6 @@
       <button onclick="switchModel('fullcar')" data-model="fullcar" class="tab-inactive text-xs font-mono px-3 py-1.5 rounded-lg border transition-all duration-200">
         Full Car
       </button>
-      <button onclick="switchModel('bose')" data-model="bose" class="tab-inactive text-xs font-mono px-3 py-1.5 rounded-lg border transition-all duration-200">
-        Bose Active
-      </button>
     </nav>
     <div class="flex items-center gap-2">
       <span class="text-xs px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded font-mono" id="fps-badge">60 fps</span>
@@ -180,6 +177,20 @@
         </div>
       </div>
 
+      <!-- Active Suspension Toggle -->
+      <div class="p-4 border-b border-zinc-800">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i data-lucide="zap" class="w-3.5 h-3.5 text-cyan-400"></i>
+            <span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">Active Suspension</span>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="active-toggle" class="sr-only peer" onchange="toggleActive(this.checked)">
+            <div class="w-9 h-5 bg-zinc-700 peer-checked:bg-cyan-500 rounded-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+          </label>
+        </div>
+      </div>
+
       <!-- Model Parameters (dynamic) -->
       <div class="p-4 border-b border-zinc-800" id="params-container">
         <!-- Populated by JS based on active model -->
@@ -246,6 +257,7 @@
     const state = {
       model: 'quarter',
       playing: false,
+      activeEnabled: false,
       time: 0,
       dt: 1 / 60,
       speed: 5.0,
@@ -263,6 +275,8 @@
         ks: { val: 25000, min: 5000, max: 60000, step: 1000, label: 'Spring Rate', unit: 'N/m' },
         cs: { val: 1500, min: 200, max: 6000, step: 100, label: 'Damping', unit: 'Ns/m' },
         kt: { val: 200000, min: 50000, max: 400000, step: 10000, label: 'Tire Stiffness', unit: 'N/m' },
+        csky: { val: 8000, min: 1000, max: 20000, step: 500, label: 'Skyhook Gain', unit: 'Ns/m', active: true },
+        kact: { val: 15000, min: 0, max: 40000, step: 1000, label: 'Active Stiffness', unit: 'N/m', active: true },
       },
       bicycle: {
         m: { val: 1400, min: 600, max: 2500, step: 50, label: 'Vehicle Mass', unit: 'kg' },
@@ -273,6 +287,8 @@
         cr: { val: 2200, min: 200, max: 6000, step: 100, label: 'Rear Damping', unit: 'Ns/m' },
         a: { val: 1.2, min: 0.6, max: 2.0, step: 0.05, label: 'CG to Front', unit: 'm' },
         b: { val: 1.4, min: 0.6, max: 2.0, step: 0.05, label: 'CG to Rear', unit: 'm' },
+        csky: { val: 8000, min: 1000, max: 20000, step: 500, label: 'Skyhook Gain', unit: 'Ns/m', active: true },
+        kact: { val: 15000, min: 0, max: 40000, step: 1000, label: 'Active Stiffness', unit: 'N/m', active: true },
       },
       fullcar: {
         m: { val: 1600, min: 800, max: 3000, step: 50, label: 'Vehicle Mass', unit: 'kg' },
@@ -284,15 +300,8 @@
         cr: { val: 2200, min: 200, max: 6000, step: 100, label: 'Rear Damping', unit: 'Ns/m' },
         tf: { val: 1.5, min: 1.0, max: 2.0, step: 0.05, label: 'Front Track', unit: 'm' },
         tr: { val: 1.5, min: 1.0, max: 2.0, step: 0.05, label: 'Rear Track', unit: 'm' },
-      },
-      bose: {
-        ms: { val: 350, min: 100, max: 800, step: 10, label: 'Sprung Mass', unit: 'kg' },
-        mu: { val: 40, min: 10, max: 100, step: 5, label: 'Unsprung Mass', unit: 'kg' },
-        ks: { val: 25000, min: 5000, max: 60000, step: 1000, label: 'Spring Rate', unit: 'N/m' },
-        cs: { val: 1500, min: 200, max: 6000, step: 100, label: 'Damping', unit: 'Ns/m' },
-        kt: { val: 200000, min: 50000, max: 400000, step: 10000, label: 'Tire Stiffness', unit: 'N/m' },
-        csky: { val: 8000, min: 1000, max: 20000, step: 500, label: 'Skyhook Gain', unit: 'Ns/m' },
-        kact: { val: 15000, min: 0, max: 40000, step: 1000, label: 'Active Stiffness', unit: 'N/m' },
+        csky: { val: 8000, min: 1000, max: 20000, step: 500, label: 'Skyhook Gain', unit: 'Ns/m', active: true },
+        kact: { val: 15000, min: 0, max: 40000, step: 1000, label: 'Active Stiffness', unit: 'N/m', active: true },
       },
     };
 
@@ -697,103 +706,6 @@
       return group;
     }
 
-    // ═══ Bose Active Suspension Model ═══
-    function buildBose() {
-      const group = new THREE.Group();
-      const p = params.bose;
-
-      const wheelR = 0.3;
-      const unsprungH = 0.15;
-      const sprungH = 0.5;
-      const baseY = wheelR;
-      const unsprungY = baseY + 0.05;
-      const suspLen = 0.8;
-      const springR = 0.12;
-
-      // Wheel
-      const wheel = createWheel(wheelR, 0.2);
-      wheel.position.set(0, baseY, 0);
-      group.add(wheel);
-
-      // Tire spring
-      const tireSpring = createSpringMesh(0.06, 0.3, 3, 0.015, 0x71717a);
-      group.add(tireSpring);
-
-      // Unsprung mass
-      const unsprung = createMassBlock(0.7, unsprungH, 0.5, COLORS.mass);
-      group.add(unsprung);
-
-      // Passive suspension spring (smaller, offset left)
-      const suspSpring = createSpringMesh(springR * 0.7, suspLen, 5, 0.015, COLORS.spring);
-      group.add(suspSpring);
-
-      // Passive damper (offset right)
-      const suspDamper = createDamperMesh(suspLen, 0.05, 0.03);
-      group.add(suspDamper);
-
-      // Active actuator (glowing cylinder in center — the Bose linear motor)
-      const actGeo = new THREE.CylinderGeometry(0.07, 0.07, suspLen, 16);
-      const actMat = new THREE.MeshStandardMaterial({
-        color: 0x06b6d4, metalness: 0.6, roughness: 0.3,
-        emissive: 0x06b6d4, emissiveIntensity: 0.4,
-      });
-      const actuator = new THREE.Mesh(actGeo, actMat);
-      actuator.castShadow = true;
-      group.add(actuator);
-
-      // Actuator glow ring (top and bottom)
-      const ringGeo = new THREE.TorusGeometry(0.09, 0.015, 8, 24);
-      const ringMat = new THREE.MeshStandardMaterial({
-        color: 0x06b6d4, emissive: 0x06b6d4, emissiveIntensity: 0.8,
-        metalness: 0.3, roughness: 0.4,
-      });
-      const ringTop = new THREE.Mesh(ringGeo, ringMat);
-      group.add(ringTop);
-      const ringBottom = new THREE.Mesh(ringGeo, ringMat.clone());
-      group.add(ringBottom);
-
-      // Sprung mass
-      const sprung = createMassBlock(1.0, sprungH, 0.7, COLORS.massLight);
-      group.add(sprung);
-
-      // CG indicator
-      const cgGeo = new THREE.SphereGeometry(0.04, 12, 12);
-      const cgMat = new THREE.MeshStandardMaterial({
-        color: COLORS.amber, emissive: COLORS.amber, emissiveIntensity: 0.5
-      });
-      const cg = new THREE.Mesh(cgGeo, cgMat);
-      group.add(cg);
-
-      // Road surface
-      const road = createRoadSurface(12, 1.5);
-      road.position.set(0, 0, 0);
-      group.add(road);
-
-      modelParts = { wheel, tireSpring, unsprung, suspSpring, suspDamper, actuator, ringTop, ringBottom, sprung, cg, road };
-
-      // Initial positions
-      const uY = baseY + wheelR * 0.3 + unsprungH / 2;
-      unsprung.position.set(0, uY, 0);
-      const sBottom = uY + unsprungH / 2;
-      const sTop = sBottom + suspLen;
-      updateSpringPos(suspSpring, sBottom, sTop, -0.25, 0);
-      updateDamperPos(suspDamper, sBottom, sTop, 0.25, 0);
-      actuator.position.set(0, (sBottom + sTop) / 2, 0);
-      ringTop.position.set(0, sTop, 0);
-      ringBottom.position.set(0, sBottom, 0);
-      sprung.position.set(0, sTop + sprungH / 2, 0);
-      cg.position.set(0, sTop + sprungH / 2, 0);
-
-      // Tire spring
-      updateSpringPos(tireSpring, 0.02, uY - unsprungH / 2, 0, 0);
-
-      // Camera
-      camera.position.set(3, 2.5, 3);
-      controls.target.set(0, 1.2, 0);
-
-      return group;
-    }
-
     // ═══ Bicycle (Half-Car) Model ═══
     function buildBicycle() {
       const group = new THREE.Group();
@@ -964,9 +876,6 @@
       if (state.model === 'quarter') {
         // State: [z_s, dz_s, z_u, dz_u]
         physState = [0, 0, 0, 0];
-      } else if (state.model === 'bose') {
-        // State: [z_s, dz_s, z_u, dz_u] (same as quarter-car, control is external)
-        physState = [0, 0, 0, 0];
       } else if (state.model === 'bicycle') {
         // State: [z, dz, theta, dtheta, z_uf, dz_uf, z_ur, dz_ur]
         physState = [0, 0, 0, 0, 0, 0, 0, 0];
@@ -983,6 +892,9 @@
         const p = params.quarter;
         const ms = p.ms.val, mu = p.mu.val;
         const ks = p.ks.val, cs = p.cs.val, kt = p.kt.val;
+        const active = state.activeEnabled;
+        const csky = active ? p.csky.val : 0;
+        const kact = active ? p.kact.val : 0;
         const zr = roadInput(t);
 
         // RK4 integration
@@ -990,35 +902,7 @@
           const [zs, dzs, zu, dzu] = s;
           const fSusp = ks * (zs - zu) + cs * (dzs - dzu);
           const fTire = kt * (zu - zr);
-          return [
-            dzs,
-            (-fSusp) / ms,
-            dzu,
-            (fSusp - fTire) / mu,
-          ];
-        };
-
-        physState = rk4Step(physState, deriv, dt);
-
-        // Tire-road contact constraint: wheel cannot penetrate road surface
-        if (physState[2] < zr) {
-          physState[2] = zr;
-          if (physState[3] < 0) physState[3] = 0;
-        }
-
-      } else if (state.model === 'bose') {
-        const p = params.bose;
-        const ms = p.ms.val, mu = p.mu.val;
-        const ks = p.ks.val, cs = p.cs.val, kt = p.kt.val;
-        const csky = p.csky.val, kact = p.kact.val;
-        const zr = roadInput(t);
-
-        const deriv = (s) => {
-          const [zs, dzs, zu, dzu] = s;
-          const fSusp = ks * (zs - zu) + cs * (dzs - dzu);
-          const fTire = kt * (zu - zr);
-          // Skyhook control: damp absolute body velocity + active stiffness to hold position
-          const fActive = -csky * dzs - kact * zs;
+          const fActive = active ? (-csky * dzs - kact * zs) : 0;
           return [
             dzs,
             (-fSusp + fActive) / ms,
@@ -1029,11 +913,13 @@
 
         physState = rk4Step(physState, deriv, dt);
 
-        // Store active force for plotting (compute from current state)
-        const [zs_c, dzs_c] = physState;
-        state.lastActiveForce = -csky * dzs_c - kact * zs_c;
+        // Store active force for plotting
+        if (active) {
+          const [zs_c, dzs_c] = physState;
+          state.lastActiveForce = -csky * dzs_c - kact * zs_c;
+        }
 
-        // Tire-road contact constraint
+        // Tire-road contact constraint: wheel cannot penetrate road surface
         if (physState[2] < zr) {
           physState[2] = zr;
           if (physState[3] < 0) physState[3] = 0;
@@ -1045,7 +931,9 @@
         const kf = p.kf.val, cf = p.cf.val, kr = p.kr.val, cr = p.cr.val;
         const a = p.a.val, b = p.b.val;
         const kt = 200000;
-        const speedSafe = Math.max(state.speed, 0.1);
+        const active = state.activeEnabled;
+        const csky = active ? p.csky.val : 0;
+        const kact = active ? p.kact.val : 0;
 
         const zrf = roadInput(t, -a);
         const zrr = roadInput(t, b);
@@ -1063,19 +951,31 @@
           const fTf = kt * (zuf - zrf);
           const fTr = kt * (zur - zrr);
 
+          // Active forces per suspension point
+          const fActF = active ? (-csky * dzf - kact * zf) : 0;
+          const fActR = active ? (-csky * dzr_body - kact * zr_body) : 0;
+
           return [
             dz,
-            (-fSf - fSr) / m,
+            (-fSf - fSr + fActF + fActR) / m,
             dth,
-            (-a * fSf + b * fSr) / Iy,
+            (-a * fSf + b * fSr + a * fActF - b * fActR) / Iy,
             dzuf,
-            (fSf - fTf) / 40,
+            (fSf - fTf - fActF) / 40,
             dzur,
-            (fSr - fTr) / 40,
+            (fSr - fTr - fActR) / 40,
           ];
         };
 
         physState = rk4Step(physState, deriv, dt);
+
+        // Store total active force for plotting
+        if (active) {
+          const [z, dz, th, dth] = physState;
+          const zf = z + a * th, dzf = dz + a * dth;
+          const zr_b = z - b * th, dzr_b = dz - b * dth;
+          state.lastActiveForce = (-csky * dzf - kact * zf) + (-csky * dzr_b - kact * zr_b);
+        }
 
         // Tire-road contact constraints: wheels cannot penetrate road surface
         if (physState[4] < zrf) {
@@ -1094,6 +994,9 @@
         const tf2 = p.tf.val / 2, tr2 = p.tr.val / 2;
         const a = 1.3, b = 1.3;
         const kt = 200000, mu = 40;
+        const active = state.activeEnabled;
+        const csky = active ? p.csky.val : 0;
+        const kact = active ? p.kact.val : 0;
 
         const corners = [
           { x: a, z: tf2 },
@@ -1104,7 +1007,6 @@
         const ks_arr = [kf, kf, kr, kr];
         const cs_arr = [cf, cf, cr, cr];
 
-        const speedSafe = Math.max(state.speed, 0.1);
         const zr_arr = corners.map(c => roadInput(t, -c.x));
 
         const deriv = (s) => {
@@ -1122,19 +1024,33 @@
 
             const fS = ks_arr[i] * (zCorner - zu) + cs_arr[i] * (dzCorner - dzu);
             const fT = kt * (zu - zr_arr[i]);
+            const fAct = active ? (-csky * dzCorner - kact * zCorner) : 0;
 
-            Fz -= fS;
-            My -= c.x * fS;
-            Mx += c.z * fS;
+            Fz += -fS + fAct;
+            My += -c.x * fS + c.x * fAct;
+            Mx += c.z * fS - c.z * fAct;
 
             wheelDerivs.push(dzu);
-            wheelDerivs.push((fS - fT) / mu);
+            wheelDerivs.push((fS - fT - fAct) / mu);
           }
 
           return [dz, Fz / m, dphi, Mx / Ix, dth, My / Iy, ...wheelDerivs];
         };
 
         physState = rk4Step(physState, deriv, dt);
+
+        // Store total active force for plotting
+        if (active) {
+          const [z, dz, phi, dphi, th, dth] = physState;
+          let totalAct = 0;
+          for (let i = 0; i < 4; i++) {
+            const c = corners[i];
+            const zCorner = z + c.x * th - c.z * phi;
+            const dzCorner = dz + c.x * dth - c.z * dphi;
+            totalAct += -csky * dzCorner - kact * zCorner;
+          }
+          state.lastActiveForce = totalAct;
+        }
 
         // Tire-road contact constraints: wheels cannot penetrate road surface
         for (let i = 0; i < 4; i++) {
@@ -1199,56 +1115,7 @@
         state.plotHistory.body.push(zs * 1000);
         state.plotHistory.wheel.push(zu * 1000);
         state.plotHistory.road.push(zr * 1000);
-
-      } else if (state.model === 'bose') {
-        const [zs, dzs, zu, dzu] = physState;
-        const zr = roadInput(t);
-
-        const wheelR = 0.3;
-        const baseY = wheelR;
-        const unsprungH = 0.15;
-        const sprungH = 0.5;
-        const suspLen = 0.8;
-
-        const roadY = zr * VIS_SCALE;
-        const uY = baseY + 0.05 + zu * VIS_SCALE;
-        const sY = baseY + 0.05 + zs * VIS_SCALE;
-
-        modelParts.wheel.position.y = Math.max(wheelR, baseY + roadY);
-        modelParts.wheel.rotation.z = -state.time * state.speed * 2;
-        modelParts.unsprung.position.y = uY + unsprungH / 2;
-
-        const suspBottom = uY + unsprungH / 2 + unsprungH / 2;
-        const suspTop = sY + suspLen;
-        updateSpringPos(modelParts.suspSpring, suspBottom, suspTop, -0.25, 0);
-        updateDamperPos(modelParts.suspDamper, suspBottom, suspTop, 0.25, 0);
-
-        // Actuator position and glow intensity based on active force
-        const actMid = (suspBottom + suspTop) / 2;
-        const actLen = suspTop - suspBottom;
-        modelParts.actuator.position.set(0, actMid, 0);
-        modelParts.actuator.scale.y = Math.max(0.1, actLen / suspLen);
-        modelParts.ringTop.position.set(0, suspTop, 0);
-        modelParts.ringBottom.position.set(0, suspBottom, 0);
-
-        // Glow intensity proportional to active force magnitude
-        const forceNorm = Math.min(1, Math.abs(state.lastActiveForce) / 3000);
-        modelParts.actuator.material.emissiveIntensity = 0.2 + forceNorm * 0.8;
-        modelParts.ringTop.material.emissiveIntensity = 0.3 + forceNorm * 0.7;
-        modelParts.ringBottom.material.emissiveIntensity = 0.3 + forceNorm * 0.7;
-
-        modelParts.sprung.position.y = suspTop + sprungH / 2;
-        modelParts.cg.position.y = suspTop + sprungH / 2;
-
-        updateSpringPos(modelParts.tireSpring, roadY + 0.02, uY, 0, 0);
-
-        updateRoadMesh(modelParts.road, t);
-
-        // Plot data (force in N, displacement in mm)
-        state.plotHistory.body.push(zs * 1000);
-        state.plotHistory.wheel.push(zu * 1000);
-        state.plotHistory.road.push(zr * 1000);
-        state.plotHistory.force.push(state.lastActiveForce);
+        if (state.activeEnabled) state.plotHistory.force.push(state.lastActiveForce);
 
       } else if (state.model === 'bicycle') {
         const [z, dz, th, dth, zuf, dzuf, zur, dzur] = physState;
@@ -1295,6 +1162,7 @@
         state.plotHistory.body.push(z * 1000);
         state.plotHistory.wheel.push(zuf * 1000);
         state.plotHistory.road.push(zrf * 1000);
+        if (state.activeEnabled) state.plotHistory.force.push(state.lastActiveForce);
 
       } else {
         const [z, dz, phi, dphi, th, dth, ...ws] = physState;
@@ -1340,6 +1208,7 @@
         state.plotHistory.body.push(z * 1000);
         state.plotHistory.wheel.push(ws[0] * 1000);
         state.plotHistory.road.push(roadInput(state.time) * 1000);
+        if (state.activeEnabled) state.plotHistory.force.push(state.lastActiveForce);
       }
 
       // Trim plot history
@@ -1457,8 +1326,8 @@
       drawLine(state.plotHistory.wheel, '#4ade80');
       drawLine(state.plotHistory.body, '#f59e0b');
 
-      // Draw active force trace for Bose model (independent scale)
-      if (state.model === 'bose' && state.plotHistory.force.length > 1) {
+      // Draw active force trace when active suspension is enabled
+      if (state.activeEnabled && state.plotHistory.force.length > 1) {
         let maxForce = Math.max(100, ...state.plotHistory.force.map(Math.abs));
         maxForce = Math.ceil(maxForce / 100) * 100;
 
@@ -1509,9 +1378,6 @@
       if (name === 'quarter') {
         modelGroup = buildQuarterCar();
         document.getElementById('model-label').textContent = 'quarter_car_2dof.sim';
-      } else if (name === 'bose') {
-        modelGroup = buildBose();
-        document.getElementById('model-label').textContent = 'bose_active_2dof.sim';
       } else if (name === 'bicycle') {
         modelGroup = buildBicycle();
         document.getElementById('model-label').textContent = 'bicycle_4dof.sim';
@@ -1526,18 +1392,8 @@
       buildModelInfo();
       updateTabs();
 
-      // Update plot legend (add force trace for Bose)
-      const legend = document.getElementById('plot-legend');
-      const baseLegend = `
-        <span class="flex items-center gap-1"><span class="w-2 h-0.5 bg-amber-500 inline-block"></span><span class="text-xs font-mono text-zinc-500">body</span></span>
-        <span class="flex items-center gap-1"><span class="w-2 h-0.5 bg-green-400 inline-block"></span><span class="text-xs font-mono text-zinc-500">wheel</span></span>
-        <span class="flex items-center gap-1"><span class="w-2 h-0.5 bg-zinc-500 inline-block"></span><span class="text-xs font-mono text-zinc-500">road</span></span>`;
-      if (name === 'bose') {
-        legend.innerHTML = baseLegend + `
-          <span class="flex items-center gap-1"><span class="w-2 h-0.5 inline-block" style="background:#06b6d4;"></span><span class="text-xs font-mono text-zinc-500">force</span></span>`;
-      } else {
-        legend.innerHTML = baseLegend;
-      }
+      // Update plot legend
+      updatePlotLegend();
     };
 
     function updateTabs() {
@@ -1559,12 +1415,14 @@
       html += '<div class="mt-3 space-y-3">';
 
       for (const [key, cfg] of Object.entries(p)) {
-        const displayVal = cfg.val >= 1000 ? (cfg.val / 1000).toFixed(1) + 'k' : cfg.val;
+        // Hide active-only params when active suspension is disabled
+        if (cfg.active && !state.activeEnabled) continue;
+        const accentColor = cfg.active ? 'text-cyan-400' : 'text-amber-400';
         html += `
           <div>
             <div class="flex justify-between items-center mb-1">
               <label class="text-xs text-zinc-500 font-mono">${cfg.label}</label>
-              <span class="text-xs font-mono text-amber-400" id="pval-${key}">${cfg.val} ${cfg.unit}</span>
+              <span class="text-xs font-mono ${accentColor}" id="pval-${key}">${cfg.val} ${cfg.unit}</span>
             </div>
             <input type="range" min="${cfg.min}" max="${cfg.max}" step="${cfg.step}" value="${cfg.val}"
               class="slider-amber" data-param="${key}"
@@ -1619,16 +1477,6 @@
             'I_x * \u03C6\u0308 = \u03A3 t_i * F_si',
             'I_y * \u03B8\u0308 = -\u03A3 l_i * F_si',
             'm_ui * z\u0308_ui = F_si - k_ti(z_ui - z_ri)',
-          ],
-        },
-        bose: {
-          title: 'Bose Active Suspension',
-          dof: '2 DoF + Active Control',
-          desc: 'Quarter-car model augmented with an active linear actuator (inspired by Bose electromagnetic suspension). A skyhook controller applies force proportional to absolute body velocity to minimize body motion, while active stiffness holds the body at nominal height. The cyan trace in the plot shows the required actuator force.',
-          equations: [
-            'm_s * z\u0308_s = -F_susp + F_active',
-            'm_u * z\u0308_u = F_susp - k_t(z_u - z_r) - F_active',
-            'F_active = -c_sky * z\u0307_s - k_act * z_s',
           ],
         },
       };
@@ -1691,6 +1539,28 @@
       state.bumpHeight = parseFloat(val);
       document.getElementById('val-bump').textContent = `${state.bumpHeight.toFixed(3)} m`;
     };
+
+    window.toggleActive = function(enabled) {
+      state.activeEnabled = enabled;
+      initPhysics();
+      buildParamsUI();
+      updatePlotLegend();
+      updateVisuals();
+    };
+
+    function updatePlotLegend() {
+      const legend = document.getElementById('plot-legend');
+      const baseLegend = `
+        <span class="flex items-center gap-1"><span class="w-2 h-0.5 bg-amber-500 inline-block"></span><span class="text-xs font-mono text-zinc-500">body</span></span>
+        <span class="flex items-center gap-1"><span class="w-2 h-0.5 bg-green-400 inline-block"></span><span class="text-xs font-mono text-zinc-500">wheel</span></span>
+        <span class="flex items-center gap-1"><span class="w-2 h-0.5 bg-zinc-500 inline-block"></span><span class="text-xs font-mono text-zinc-500">road</span></span>`;
+      if (state.activeEnabled) {
+        legend.innerHTML = baseLegend + `
+          <span class="flex items-center gap-1"><span class="w-2 h-0.5 inline-block" style="background:#06b6d4;"></span><span class="text-xs font-mono text-zinc-500">force</span></span>`;
+      } else {
+        legend.innerHTML = baseLegend;
+      }
+    }
 
     window.togglePanel = function() {
       const panel = document.getElementById('controls-panel');
