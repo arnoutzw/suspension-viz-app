@@ -177,6 +177,44 @@
         </div>
       </div>
 
+      <!-- Uneven Road (Full Car only) -->
+      <div class="p-4 border-b border-zinc-800" id="uneven-road-section" style="display:none;">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i data-lucide="mountain" class="w-3.5 h-3.5 text-orange-400"></i>
+            <span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">Uneven Road</span>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="uneven-toggle" class="sr-only peer" onchange="toggleUneven(this.checked)">
+            <div class="w-9 h-5 bg-zinc-700 peer-checked:bg-orange-500 rounded-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+          </label>
+        </div>
+        <p class="text-xs text-zinc-500 mt-2">Asymmetric road surface that induces roll, pitch &amp; coupled motions.</p>
+        <div id="uneven-params" style="display:none;" class="mt-3 space-y-2">
+          <div>
+            <div class="flex justify-between items-center mb-1">
+              <label class="text-xs text-zinc-500 font-mono">Lateral Phase</label>
+              <span class="text-xs font-mono text-orange-400" id="val-unevenPhase">0.80 rad/m</span>
+            </div>
+            <input type="range" min="0" max="3.14" step="0.05" value="0.80" class="slider-amber" id="slider-unevenPhase" oninput="updateUnevenParam('unevenPhase', this.value)">
+          </div>
+          <div>
+            <div class="flex justify-between items-center mb-1">
+              <label class="text-xs text-zinc-500 font-mono">Asymmetry</label>
+              <span class="text-xs font-mono text-orange-400" id="val-unevenAmplitude">0.70</span>
+            </div>
+            <input type="range" min="0" max="1" step="0.05" value="0.70" class="slider-amber" id="slider-unevenAmplitude" oninput="updateUnevenParam('unevenAmplitude', this.value)">
+          </div>
+          <div>
+            <div class="flex justify-between items-center mb-1">
+              <label class="text-xs text-zinc-500 font-mono">Cross-Slope</label>
+              <span class="text-xs font-mono text-orange-400" id="val-unevenCrossSlope">0.00 deg</span>
+            </div>
+            <input type="range" min="-5" max="5" step="0.25" value="0" class="slider-amber" id="slider-unevenCrossSlope" oninput="updateUnevenParam('unevenCrossSlope', this.value)">
+          </div>
+        </div>
+      </div>
+
       <!-- Active Suspension Toggle -->
       <div class="p-4 border-b border-zinc-800">
         <div class="flex items-center justify-between">
@@ -258,11 +296,15 @@
       model: 'quarter',
       playing: false,
       activeEnabled: false,
+      unevenRoad: false,
       time: 0,
       dt: 1 / 60,
       speed: 5.0,
       bumpHeight: 0.05,
       roadType: 'bump',
+      unevenPhase: 0.8,       // lateral phase shift (radians per metre of track width)
+      unevenAmplitude: 0.7,   // 0-1: how much the right side differs (0 = symmetric, 1 = fully inverted)
+      unevenCrossSlope: 0.0,  // static cross-slope (rad), positive = right side lower
       plotHistory: { body: [], wheel: [], road: [], force: [] },
       maxPlotPoints: 280,
     };
@@ -595,23 +637,67 @@
     }
 
     // ── Road Input Function ─────────────────────────────────────────
-    function roadInput(t, xOffset = 0) {
+    // yOffset: lateral position of the wheel (positive = left, negative = right)
+    // When uneven road is enabled, lateral position modulates the road profile
+    // to create asymmetric excitation that induces roll, pitch, and combined motions.
+    function roadInput(t, xOffset = 0, yOffset = 0) {
       const x = state.speed * t - xOffset;
       const h = state.bumpHeight;
 
+      // Base road profile (centerline)
+      let z;
       if (state.roadType === 'bump') {
         const bumpStart = 2;
         const bumpLen = 0.3;
         if (x >= bumpStart && x <= bumpStart + bumpLen) {
-          return h * Math.sin(Math.PI * (x - bumpStart) / bumpLen);
+          z = h * Math.sin(Math.PI * (x - bumpStart) / bumpLen);
+        } else {
+          z = 0;
         }
-        return 0;
       } else if (state.roadType === 'sine') {
-        return h * Math.sin(2 * Math.PI * 0.5 * x);
+        z = h * Math.sin(2 * Math.PI * 0.5 * x);
       } else {
         // Pseudo-random (deterministic noise)
-        return h * (Math.sin(x * 3.7) * 0.5 + Math.sin(x * 7.3) * 0.3 + Math.sin(x * 13.1) * 0.2);
+        z = h * (Math.sin(x * 3.7) * 0.5 + Math.sin(x * 7.3) * 0.3 + Math.sin(x * 13.1) * 0.2);
       }
+
+      // Apply uneven road modulation when enabled
+      if (state.unevenRoad && yOffset !== 0) {
+        const phase = state.unevenPhase;
+        const amp = state.unevenAmplitude;
+        const crossSlope = state.unevenCrossSlope;
+
+        if (state.roadType === 'bump') {
+          // Bump hits one side before the other (diagonal bump)
+          const bumpStart = 2;
+          const bumpLen = 0.3;
+          const lateralDelay = yOffset * phase * 0.15; // lateral timing offset
+          const xShifted = x - lateralDelay;
+          if (xShifted >= bumpStart && xShifted <= bumpStart + bumpLen) {
+            z = h * (1 - amp * 0.5 * Math.sign(-yOffset)) *
+                Math.sin(Math.PI * (xShifted - bumpStart) / bumpLen);
+          } else {
+            z = 0;
+          }
+        } else if (state.roadType === 'sine') {
+          // Phase-shifted sine: left and right tracks see different phases
+          const lateralPhase = yOffset * phase;
+          z = h * Math.sin(2 * Math.PI * 0.5 * x + lateralPhase);
+        } else {
+          // Random: independent lateral roughness components added
+          const lateralPhase = yOffset * phase;
+          z = h * (
+            Math.sin(x * 3.7 + lateralPhase) * 0.5 +
+            Math.sin(x * 7.3 - lateralPhase * 1.3) * 0.3 +
+            Math.sin(x * 13.1 + lateralPhase * 2.1) * 0.2
+          );
+        }
+
+        // Add static cross-slope: height offset proportional to lateral position
+        z += yOffset * Math.sin(crossSlope);
+      }
+
+      return z;
     }
 
     // ── Update spring/damper positions ──────────────────────────────
@@ -1007,7 +1093,7 @@
         const ks_arr = [kf, kf, kr, kr];
         const cs_arr = [cf, cf, cr, cr];
 
-        const zr_arr = corners.map(c => roadInput(t, -c.x));
+        const zr_arr = corners.map(c => roadInput(t, -c.x, c.z));
 
         const deriv = (s) => {
           const [z, dz, phi, dphi, th, dth, ...wheelState] = s;
@@ -1180,7 +1266,7 @@
         for (let i = 0; i < 4; i++) {
           const c = corners[i];
           const zu = ws[i * 2];
-          const zr_val = roadInput(state.time, -c.x);
+          const zr_val = roadInput(state.time, -c.x, c.z);
 
           const wheelY = Math.max(wheelR, wheelR + zr_val * VIS_SCALE);
           modelParts.wheels[i].position.y = wheelY;
@@ -1207,7 +1293,7 @@
 
         state.plotHistory.body.push(z * 1000);
         state.plotHistory.wheel.push(ws[0] * 1000);
-        state.plotHistory.road.push(roadInput(state.time) * 1000);
+        state.plotHistory.road.push(roadInput(state.time, -corners[0].x, corners[0].z) * 1000);
         if (state.activeEnabled) state.plotHistory.force.push(state.lastActiveForce);
       }
 
@@ -1230,30 +1316,54 @@
       const halfLen = Math.abs(pos.getX(0));
       const speedSafe = Math.max(state.speed, 0.1);
 
+      // Get road half-width from first vertex Y (in local plane coords, before rotation)
+      const roadHalfWidth = Math.abs(pos.getY(0));
+
       // Profile line + ribbon refs
       const profileLine = roadGroup.userData.profileLine;
       const ribbonMesh = roadGroup.userData.ribbonMesh;
       const profilePos = profileLine ? profileLine.geometry.attributes.position : null;
       const ribbonPos = ribbonMesh ? ribbonMesh.geometry.attributes.position : null;
 
+      const isUneven = state.unevenRoad && state.model === 'fullcar';
+
       for (let i = 0; i <= segs; i++) {
         const xFrac = i / segs;
         const x = (xFrac - 0.5) * halfLen * 2;
-        const roadY = roadInput(t + x / speedSafe) * VIS_SCALE;
 
-        // PlaneGeometry is XY, rotated -PI/2 around X → local Z maps to world Y
-        pos.setZ(i, roadY);
-        pos.setZ(segs + 1 + i, roadY);
+        if (isUneven) {
+          // Left edge (positive z in world = positive y in local plane)
+          const roadYLeft = roadInput(t + x / speedSafe, 0, roadHalfWidth) * VIS_SCALE;
+          // Right edge (negative z in world = negative y in local plane)
+          const roadYRight = roadInput(t + x / speedSafe, 0, -roadHalfWidth) * VIS_SCALE;
 
-        // Update the 3D profile line (lives in world space, no rotation)
-        if (profilePos) {
-          profilePos.setY(i, roadY + 0.006);
-        }
+          // Row 0 = first row of vertices (positive Y side = left in world Z)
+          pos.setZ(i, roadYLeft);
+          // Row 1 = second row of vertices (negative Y side = right in world Z)
+          pos.setZ(segs + 1 + i, roadYRight);
 
-        // Update the ribbon mesh (two verts per segment point)
-        if (ribbonPos) {
-          ribbonPos.setY(i * 2, roadY + 0.004);
-          ribbonPos.setY(i * 2 + 1, roadY + 0.004);
+          // Profile line shows centerline average
+          const roadYCenter = (roadYLeft + roadYRight) / 2;
+          if (profilePos) {
+            profilePos.setY(i, roadYCenter + 0.006);
+          }
+          if (ribbonPos) {
+            ribbonPos.setY(i * 2, roadYCenter + 0.004);
+            ribbonPos.setY(i * 2 + 1, roadYCenter + 0.004);
+          }
+        } else {
+          const roadY = roadInput(t + x / speedSafe) * VIS_SCALE;
+
+          pos.setZ(i, roadY);
+          pos.setZ(segs + 1 + i, roadY);
+
+          if (profilePos) {
+            profilePos.setY(i, roadY + 0.006);
+          }
+          if (ribbonPos) {
+            ribbonPos.setY(i * 2, roadY + 0.004);
+            ribbonPos.setY(i * 2 + 1, roadY + 0.004);
+          }
         }
       }
 
@@ -1391,9 +1501,13 @@
       buildParamsUI();
       buildModelInfo();
       updateTabs();
+      updateUnevenRoadVisibility();
 
       // Update plot legend
       updatePlotLegend();
+
+      // Re-initialize Lucide icons for newly added DOM elements
+      lucide.createIcons();
     };
 
     function updateTabs() {
@@ -1547,6 +1661,37 @@
       updatePlotLegend();
       updateVisuals();
     };
+
+    window.toggleUneven = function(enabled) {
+      state.unevenRoad = enabled;
+      const paramsDiv = document.getElementById('uneven-params');
+      if (paramsDiv) paramsDiv.style.display = enabled ? 'block' : 'none';
+      initPhysics();
+      updateVisuals();
+    };
+
+    window.updateUnevenParam = function(key, val) {
+      const v = parseFloat(val);
+      if (key === 'unevenCrossSlope') {
+        // Slider is in degrees, convert to radians
+        state.unevenCrossSlope = v * Math.PI / 180;
+        document.getElementById('val-unevenCrossSlope').textContent = `${v.toFixed(2)} deg`;
+      } else {
+        state[key] = v;
+        if (key === 'unevenPhase') {
+          document.getElementById('val-unevenPhase').textContent = `${v.toFixed(2)} rad/m`;
+        } else if (key === 'unevenAmplitude') {
+          document.getElementById('val-unevenAmplitude').textContent = `${v.toFixed(2)}`;
+        }
+      }
+    };
+
+    function updateUnevenRoadVisibility() {
+      const section = document.getElementById('uneven-road-section');
+      if (section) {
+        section.style.display = state.model === 'fullcar' ? 'block' : 'none';
+      }
+    }
 
     function updatePlotLegend() {
       const legend = document.getElementById('plot-legend');
