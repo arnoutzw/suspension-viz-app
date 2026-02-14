@@ -61,6 +61,23 @@
       opacity: 0;
       pointer-events: none;
     }
+    .force-label {
+      position: absolute;
+      pointer-events: none;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      font-weight: 600;
+      color: #fbbf24;
+      background: rgba(24, 24, 27, 0.82);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      border-radius: 4px;
+      padding: 1px 5px;
+      white-space: nowrap;
+      transform: translate(-50%, -50%);
+      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+      z-index: 10;
+      transition: opacity 0.15s;
+    }
   </style>
 </head>
 <body class="bg-zinc-950 text-zinc-300 font-sans h-full flex flex-col">
@@ -104,6 +121,8 @@
     <!-- 3D Viewport -->
     <div class="flex-1 relative" id="viewport-container">
       <canvas id="three-canvas"></canvas>
+      <!-- Overlay: Spring Force Labels -->
+      <div id="force-labels-container" class="absolute inset-0 pointer-events-none overflow-hidden"></div>
       <!-- Overlay: Model Label -->
       <div class="absolute top-4 left-4 pointer-events-none">
         <div class="bg-zinc-900/80 backdrop-blur-sm border border-zinc-700 rounded-lg px-3 py-2">
@@ -1162,6 +1181,53 @@
     // ── UPDATE 3D FROM PHYSICS ──────────────────────────────────────
     const VIS_SCALE = 3.0; // Amplify displacements for visibility
 
+    // ── Spring Force Labels ──────────────────────────────────────────
+    const forceLabelsContainer = document.getElementById('force-labels-container');
+    let forceLabels = []; // { el, world3D }
+
+    function createForceLabels(count) {
+      clearForceLabels();
+      for (let i = 0; i < count; i++) {
+        const el = document.createElement('div');
+        el.className = 'force-label';
+        el.textContent = '0 N';
+        forceLabelsContainer.appendChild(el);
+        forceLabels.push({ el, worldPos: new THREE.Vector3() });
+      }
+    }
+
+    function clearForceLabels() {
+      forceLabels.forEach(l => l.el.remove());
+      forceLabels = [];
+    }
+
+    function updateForceLabelPos() {
+      const container = document.getElementById('viewport-container');
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+
+      forceLabels.forEach(label => {
+        const pos = label.worldPos.clone().project(camera);
+        // pos is in NDC: x,y in [-1, 1], z for depth
+        if (pos.z > 1) {
+          // Behind camera
+          label.el.style.opacity = '0';
+          return;
+        }
+        const sx = (pos.x * 0.5 + 0.5) * w;
+        const sy = (-pos.y * 0.5 + 0.5) * h;
+        label.el.style.left = sx + 'px';
+        label.el.style.top = sy + 'px';
+        label.el.style.opacity = '1';
+      });
+    }
+
+    function formatForce(f) {
+      const abs = Math.abs(f);
+      if (abs >= 1000) return (f / 1000).toFixed(1) + ' kN';
+      return Math.round(f) + ' N';
+    }
+
     function updateVisuals() {
       if (!modelParts || Object.keys(modelParts).length === 0) return;
       const t = state.time;
@@ -1193,6 +1259,17 @@
         modelParts.cg.position.y = suspTop + sprungH / 2;
 
         updateSpringPos(modelParts.tireSpring, roadY + 0.02, uY, 0, 0);
+
+        // Compute spring forces and update labels
+        const p_q = params.quarter;
+        const fSusp_q = p_q.ks.val * (zs - zu) + p_q.cs.val * (dzs - dzu);
+        const fTire_q = p_q.kt.val * (zu - zr);
+        if (forceLabels.length === 2) {
+          forceLabels[0].el.textContent = formatForce(fSusp_q);
+          forceLabels[0].worldPos.set(-0.2, (suspBottom + suspTop) / 2, 0);
+          forceLabels[1].el.textContent = formatForce(fTire_q);
+          forceLabels[1].worldPos.set(0, (roadY + 0.02 + uY) / 2, 0);
+        }
 
         // Update road mesh
         updateRoadMesh(modelParts.road, t);
@@ -1238,6 +1315,19 @@
         updateSpringPos(modelParts.rSpring, rUnY + 0.05, rBodyCorner, -b - 0.12, 0);
         updateDamperPos(modelParts.rDamper, rUnY + 0.05, rBodyCorner, -b + 0.12, 0);
 
+        // Compute spring forces and update labels
+        const p_b = params.bicycle;
+        const zf_b = z + a * th, dzf_b = dz + a * dth;
+        const zr_b = z - b * th, dzr_b = dz - b * dth;
+        const fSf_b = p_b.kf.val * (zf_b - zuf) + p_b.cf.val * (dzf_b - dzuf);
+        const fSr_b = p_b.kr.val * (zr_b - zur) + p_b.cr.val * (dzr_b - dzur);
+        if (forceLabels.length === 2) {
+          forceLabels[0].el.textContent = formatForce(fSf_b);
+          forceLabels[0].worldPos.set(a - 0.12, (fUnY + 0.05 + fBodyCorner) / 2, 0);
+          forceLabels[1].el.textContent = formatForce(fSr_b);
+          forceLabels[1].worldPos.set(-b - 0.12, (rUnY + 0.05 + rBodyCorner) / 2, 0);
+        }
+
         const bodyCenterY = (fBodyCorner + rBodyCorner) / 2 + bodyH / 2;
         modelParts.body.position.set((a - b) / 2, bodyCenterY, 0);
         modelParts.body.rotation.z = bodyTh;
@@ -1263,9 +1353,14 @@
         const corners = modelParts.corners;
         const speedSafe = Math.max(state.speed, 0.1);
 
+        const p_fc = params.fullcar;
+        const ks_fc = [p_fc.kf.val, p_fc.kf.val, p_fc.kr.val, p_fc.kr.val];
+        const cs_fc = [p_fc.cf.val, p_fc.cf.val, p_fc.cr.val, p_fc.cr.val];
+
         for (let i = 0; i < 4; i++) {
           const c = corners[i];
           const zu = ws[i * 2];
+          const dzu = ws[i * 2 + 1];
           const zr_val = roadInput(state.time, -c.x, c.z);
 
           const wheelY = Math.max(wheelR, wheelR + zr_val * VIS_SCALE);
@@ -1276,11 +1371,19 @@
           modelParts.unsprungs[i].position.y = unY;
 
           const zCorner = z + c.x * th - c.z * phi;
+          const dzCorner = dz + c.x * dth - c.z * dphi;
           const cornerY = suspBase_ref + suspLen + zCorner * VIS_SCALE;
 
           const sOff = i % 2 === 0 ? 0.1 : -0.1;
           updateSpringPos(modelParts.springs[i], unY + 0.04, cornerY, c.x, c.z + sOff);
           updateDamperPos(modelParts.dampers[i], unY + 0.04, cornerY, c.x, c.z - sOff);
+
+          // Compute spring force and update label
+          const fS_fc = ks_fc[i] * (zCorner - zu) + cs_fc[i] * (dzCorner - dzu);
+          if (forceLabels[i]) {
+            forceLabels[i].el.textContent = formatForce(fS_fc);
+            forceLabels[i].worldPos.set(c.x, (unY + 0.04 + cornerY) / 2, c.z + sOff);
+          }
         }
 
         const bodyCenterY = suspBase_ref + suspLen + z * VIS_SCALE + bodyH / 2;
@@ -1479,6 +1582,7 @@
         modelGroup = null;
       }
       modelParts = {};
+      clearForceLabels();
     }
 
     window.switchModel = function(name) {
@@ -1502,6 +1606,11 @@
       buildModelInfo();
       updateTabs();
       updateUnevenRoadVisibility();
+
+      // Create spring force labels
+      // Quarter: 2 (suspension spring + tire spring), Bicycle: 2 (front + rear), Full car: 4
+      const labelCounts = { quarter: 2, bicycle: 2, fullcar: 4 };
+      createForceLabels(labelCounts[name] || 0);
 
       // Update plot legend
       updatePlotLegend();
@@ -1769,6 +1878,11 @@
       // Three.js
       controls.update();
       renderer.render(scene, camera);
+
+      // Update force label screen positions (needs up-to-date camera)
+      if (forceLabels.length > 0) {
+        updateForceLabelPos();
+      }
     }
 
     // ── INIT ────────────────────────────────────────────────────────
